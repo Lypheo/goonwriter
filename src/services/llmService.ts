@@ -18,7 +18,9 @@ export function replacePlaceholdersWithModelTokens(
     .replaceAll(SPECIAL_TOKENS.START_USER, template.userTagPrefix)
     .replaceAll(SPECIAL_TOKENS.END_USER, template.userTagSuffix)
     .replaceAll(SPECIAL_TOKENS.START_AI, template.assistantTagPrefix)
-    .replaceAll(SPECIAL_TOKENS.END_AI, template.assistantTagSuffix);
+    .replaceAll(SPECIAL_TOKENS.END_AI, template.assistantTagSuffix)
+    .replaceAll(SPECIAL_TOKENS.START_THINK, template.thinkTagPrefix || '<think>')
+    .replaceAll(SPECIAL_TOKENS.END_THINK, template.thinkTagSuffix || '</think>');
 }
 
 // Replace model-specific tokens with placeholder tokens
@@ -46,6 +48,12 @@ export function replaceModelTokensWithPlaceholders(
   }
   if (template.assistantTagSuffix) {
     result = result.replaceAll(template.assistantTagSuffix, SPECIAL_TOKENS.END_AI);
+  }
+  if (template.thinkTagPrefix && template.thinkTagPrefix !== '<think>') {
+    result = result.replaceAll(template.thinkTagPrefix, SPECIAL_TOKENS.START_THINK);
+  }
+  if (template.thinkTagSuffix && template.thinkTagSuffix !== '</think>') {
+    result = result.replaceAll(template.thinkTagSuffix, SPECIAL_TOKENS.END_THINK);
   }
   
   return result;

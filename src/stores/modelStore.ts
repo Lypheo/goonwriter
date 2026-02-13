@@ -12,6 +12,8 @@ const defaultInstructionTemplate: InstructionTemplate = {
   userTagSuffix: '',
   assistantTagPrefix: '',
   assistantTagSuffix: '',
+  thinkTagPrefix: '<think>',
+  thinkTagSuffix: '</think>',
   allowedProviders: [],
   bannedProviders: [],
   allowedQuantizations: [],

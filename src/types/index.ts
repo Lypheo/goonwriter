@@ -53,6 +53,8 @@ export interface InstructionTemplate {
   userTagSuffix: string;
   assistantTagPrefix: string;
   assistantTagSuffix: string;
+  thinkTagPrefix: string;
+  thinkTagSuffix: string;
   allowedProviders: string[];
   bannedProviders: string[];
   allowedQuantizations: string[];
@@ -171,6 +173,8 @@ export const SPECIAL_TOKENS = {
   END_USER: '<<end_user>>',
   START_AI: '<<start_ai>>',
   END_AI: '<<end_ai>>',
+  START_THINK: '<think>',
+  END_THINK: '</think>',
 } as const;
 
 export type SectionType = 'system' | 'user' | 'ai' | 'default';

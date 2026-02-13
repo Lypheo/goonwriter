@@ -169,6 +169,23 @@ export function ModelConfigDialog({ isOpen, onClose, editingModel }: ModelConfig
               placeholder="</s>"
             />
           </div>
+          
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <Textarea
+              label="Think Tag Prefix"
+              value={formData.instructionTemplate.thinkTagPrefix}
+              onChange={(e) => updateTemplate('thinkTagPrefix', e.target.value)}
+              rows={2}
+              placeholder="<think>"
+            />
+            <Textarea
+              label="Think Tag Suffix"
+              value={formData.instructionTemplate.thinkTagSuffix}
+              onChange={(e) => updateTemplate('thinkTagSuffix', e.target.value)}
+              rows={2}
+              placeholder="</think>"
+            />
+          </div>
         </div>
         
         {/* Provider Settings */}

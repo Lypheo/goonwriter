@@ -52,6 +52,8 @@ function findSpecialTokensWithPositions(
     { token: SPECIAL_TOKENS.END_USER, type: 'user-end', isEndToken: true },
     { token: SPECIAL_TOKENS.START_AI, type: 'ai-start', isEndToken: false },
     { token: SPECIAL_TOKENS.END_AI, type: 'ai-end', isEndToken: true },
+    { token: SPECIAL_TOKENS.START_THINK, type: 'think-start', isEndToken: false },
+    { token: SPECIAL_TOKENS.END_THINK, type: 'think-end', isEndToken: false },
   ];
   
   // Build a map of text positions to document positions
@@ -265,6 +267,53 @@ export const StoryDecorations = Extension.create({
             
             // Find special tokens with correct positions
             const tokens = findSpecialTokensWithPositions(doc);
+            
+            // Find think content ranges (text between think-start and think-end)
+            const thinkRanges: { from: number; to: number }[] = [];
+            const thinkStarts = tokens.filter(t => t.type === 'think-start');
+            const thinkEnds = tokens.filter(t => t.type === 'think-end');
+            
+            for (const start of thinkStarts) {
+              // Find the closest think-end after this think-start
+              const matchingEnd = thinkEnds.find(end => end.from > start.to);
+              if (matchingEnd) {
+                // Content between end of start tag and start of end tag
+                if (start.to < matchingEnd.from) {
+                  thinkRanges.push({ from: start.to, to: matchingEnd.from });
+                }
+              }
+            }
+            
+            // Apply think content styling
+            for (const range of thinkRanges) {
+              // Map text positions to doc positions
+              let fromDocPos: number | undefined;
+              let toDocPos: number | undefined;
+              
+              // Find first valid position >= range.from
+              for (let i = 0; i < textToDocPos.length && textToDocPos.length > 0; i++) {
+                if (textToDocPos[i] !== -1 && textToDocPos[i] >= range.from) {
+                  fromDocPos = textToDocPos[i];
+                  break;
+                }
+              }
+              
+              // Find last valid position < range.to
+              for (let i = textToDocPos.length - 1; i >= 0; i--) {
+                if (textToDocPos[i] !== -1 && textToDocPos[i] < range.to) {
+                  toDocPos = textToDocPos[i];
+                  break;
+                }
+              }
+              
+              // Use direct doc positions from token positions
+              decorations.push(
+                Decoration.inline(range.from, range.to, {
+                  class: 'think-content',
+                })
+              );
+            }
+            
             for (const token of tokens) {
               // Add inline decoration for token styling
               decorations.push(
