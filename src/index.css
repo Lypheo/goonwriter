@@ -93,19 +93,6 @@
   height: 100%;
 }
 
-/* Section background styles - disabled, using ai-authored instead */
-.story-editor .section-system {
-  /* background removed */
-}
-
-.story-editor .section-user {
-  /* background removed */
-}
-
-.story-editor .section-ai {
-  /* background removed */
-}
-
 /* Markdown formatting styles */
 .story-editor .md-bold-marker {
   color: #6b7280;

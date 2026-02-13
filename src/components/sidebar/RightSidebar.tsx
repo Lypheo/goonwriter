@@ -7,6 +7,16 @@ import { ModelConfigDialog } from './ModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
 import { ResponseMetadata } from './ResponseMetadata';
 
+// Escape HTML entities
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br>');
+}
+
 const SettingsIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -63,8 +73,9 @@ export function RightSidebar() {
     let generatedText = '';
     let wordCount = 0;
     const startTime = Date.now();
-    const initialContent = selectedStory.content || '';
-    const initialLength = initialContent.length;
+    
+    // Get the current HTML content as the base
+    const initialHtml = selectedStory.htmlContent || `<p>${escapeHtml(selectedStory.content || '')}</p>`;
     
     try {
       await streamCompletion(
@@ -74,26 +85,29 @@ export function RightSidebar() {
         {
           onChunk: (text) => {
             generatedText += text;
-            wordCount = generatedText.split(/\s+/).filter((w) => w.length > 0).length;
+            wordCount = generatedText.split(/\\s+/).filter((w) => w.length > 0).length;
             
             const elapsedSeconds = (Date.now() - startTime) / 1000;
             const wps = elapsedSeconds > 0 ? wordCount / elapsedSeconds : 0;
             
-            // Update story content
+            // Build HTML with AI-authored mark wrapping the generated text
+            // The mark will persist through all text operations
+            const escapedGenerated = escapeHtml(generatedText);
+            const aiMarkedText = `<span data-ai-authored="true" data-model-id="${selectedModel.modelId}" class="ai-authored">${escapedGenerated}</span>`;
+            
+            // Insert at end of last paragraph or create new content
+            let newHtml: string;
+            if (initialHtml.endsWith('</p>')) {
+              // Insert before the closing </p> tag
+              newHtml = initialHtml.slice(0, -4) + aiMarkedText + '</p>';
+            } else {
+              newHtml = initialHtml + aiMarkedText;
+            }
+            
+            // Update story with both plain text and HTML
             updateStory(selectedStory.id, {
-              content: initialContent + generatedText,
-              // Update authorship spans
-              authorshipSpans: [
-                ...selectedStory.authorshipSpans.filter(
-                  (span) => span.end <= initialLength
-                ),
-                {
-                  start: initialLength,
-                  end: initialLength + generatedText.length,
-                  author: 'ai' as const,
-                  modelId: selectedModel.modelId,
-                },
-              ],
+              content: (selectedStory.content || '') + generatedText,
+              htmlContent: newHtml,
             });
             
             setResponseMetadata({ wordsPerSecond: wps });

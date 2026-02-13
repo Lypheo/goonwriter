@@ -6,135 +6,33 @@ import Text from '@tiptap/extension-text';
 import Placeholder from '@tiptap/extension-placeholder';
 import HardBreak from '@tiptap/extension-hard-break';
 import { useDataStore, useAppStore, useGenerationStore, useModelStore } from '../../stores';
-import { StoryDecorations, setAuthorshipSpans } from './extensions';
-import type { AuthorshipSpan } from '../../types';
+import { StoryDecorations, AiAuthored } from './extensions';
 
-// Escape HTML entities to prevent angle brackets from being interpreted as tags
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+// Escape HTML entities for special tokens that should be visible as-is
+function escapeSpecialTokens(html: string): string {
+  // Only escape angle brackets that are part of special tokens like <<start_sys_prompt>>
+  // but NOT the HTML tags we use for structure
+  return html
+    .replace(/<<([^>]+)>>/g, '&lt;&lt;$1&gt;&gt;');
 }
 
-// Convert plain text with newlines to HTML paragraphs
+// Convert plain text with newlines to HTML paragraphs (for legacy migration)
 function textToHtml(text: string): string {
   if (!text) return '<p></p>';
   // Split by double newlines for paragraphs
   const paragraphs = text.split(/\n\n+/);
   return paragraphs
     .map(p => {
-      // First escape HTML entities, then convert single newlines to <br>
-      const escaped = escapeHtml(p);
+      // Escape special tokens, then convert single newlines to <br>
+      const escaped = escapeSpecialTokens(
+        p.replace(/&/g, '&amp;')
+         .replace(/</g, '&lt;')
+         .replace(/>/g, '&gt;')
+      );
       const withBreaks = escaped.replace(/\n/g, '<br>');
       return `<p>${withBreaks || '<br>'}</p>`;
     })
     .join('');
-}
-
-// Convert HTML content back to plain text (for future use)
-// function htmlToText(html: string): string {
-//   return html
-//     .replace(/<br\s*\/?>/gi, '\n')
-//     .replace(/<\/p><p>/gi, '\n\n')
-//     .replace(/<\/?p>/gi, '')
-//     .replace(/<[^>]+>/g, '');
-// }
-
-// Merge overlapping authorship spans and consolidate
-function normalizeAuthorshipSpans(spans: AuthorshipSpan[]): AuthorshipSpan[] {
-  if (spans.length === 0) return [];
-  
-  // Sort by start position
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
-  const result: AuthorshipSpan[] = [];
-  let current = { ...sorted[0] };
-  
-  for (let i = 1; i < sorted.length; i++) {
-    const span = sorted[i];
-    
-    // If same author and adjacent/overlapping, merge
-    if (
-      span.start <= current.end &&
-      span.author === current.author &&
-      span.modelId === current.modelId
-    ) {
-      current.end = Math.max(current.end, span.end);
-    } else if (span.start < current.end) {
-      // Overlapping with different author - trim current
-      if (current.end > span.start) {
-        current.end = span.start;
-      }
-      if (current.end > current.start) {
-        result.push(current);
-      }
-      current = { ...span };
-    } else {
-      result.push(current);
-      current = { ...span };
-    }
-  }
-  
-  result.push(current);
-  return result.filter((s) => s.end > s.start);
-}
-
-// Update spans after text change
-function updateSpansOnEdit(
-  spans: AuthorshipSpan[],
-  changeStart: number,
-  removedLength: number,
-  addedLength: number
-): AuthorshipSpan[] {
-  const delta = addedLength - removedLength;
-  const changeEnd = changeStart + removedLength;
-  
-  const updated: AuthorshipSpan[] = [];
-  
-  for (const span of spans) {
-    if (span.end <= changeStart) {
-      // Span is entirely before change - keep as is
-      updated.push(span);
-    } else if (span.start >= changeEnd) {
-      // Span is entirely after change - shift by delta
-      updated.push({
-        ...span,
-        start: span.start + delta,
-        end: span.end + delta,
-      });
-    } else if (span.start < changeStart && span.end > changeEnd) {
-      // Change is within span - split into two parts (before and after)
-      // Part before the change
-      updated.push({
-        ...span,
-        end: changeStart,
-      });
-      // Part after the change (shifted by delta)
-      updated.push({
-        ...span,
-        start: changeStart + addedLength,
-        end: span.end + delta,
-      });
-    } else if (span.start >= changeStart && span.end <= changeEnd) {
-      // Span is entirely within change - remove it
-      continue;
-    } else if (span.start < changeStart) {
-      // Span starts before change but overlaps - truncate
-      updated.push({
-        ...span,
-        end: changeStart,
-      });
-    } else {
-      // Span starts within change but extends beyond - adjust
-      updated.push({
-        ...span,
-        start: changeStart + addedLength,
-        end: span.end + delta,
-      });
-    }
-  }
-  
-  return normalizeAuthorshipSpans(updated);
 }
 
 export function StoryEditor() {
@@ -145,26 +43,24 @@ export function StoryEditor() {
   
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedContentRef = useRef<string>('');
+  const lastSavedHtmlRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
   
   // Track cursor position for authorship display
-  const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai' | null; modelId?: string }>({ author: null });
+  const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai'; modelId?: string }>({ author: 'user' });
   
-  // Get author at a given text position
-  const getAuthorAtPosition = useCallback((pos: number, spans: AuthorshipSpan[]): { author: 'user' | 'ai' | null; modelId?: string } => {
-    for (const span of spans) {
-      if (pos >= span.start && pos < span.end) {
-        return { author: span.author, modelId: span.modelId };
-      }
+  // Get the HTML content, migrating from plain text if needed
+  const getEditorContent = useCallback(() => {
+    if (!selectedStory) return '<p></p>';
+    
+    // If htmlContent exists, use it
+    if (selectedStory.htmlContent) {
+      return selectedStory.htmlContent;
     }
-    return { author: null };
-  }, []);
-  
-  // Set initial authorship spans before editor creation
-  if (selectedStory) {
-    setAuthorshipSpans(selectedStory.authorshipSpans || []);
-  }
+    
+    // Migration: convert plain text content to HTML
+    return textToHtml(selectedStory.content || '');
+  }, [selectedStory]);
   
   const editor = useEditor({
     extensions: [
@@ -172,96 +68,39 @@ export function StoryEditor() {
       Paragraph,
       Text,
       HardBreak,
+      AiAuthored, // Mark for tracking AI-authored text
       Placeholder.configure({
         placeholder: 'Start writing your story...',
       }),
       StoryDecorations,
     ],
-    content: textToHtml(selectedStory?.content || ''),
+    content: getEditorContent(),
     editable: !isGenerating,
     onSelectionUpdate: ({ editor }) => {
-      if (!selectedStory) return;
-      
-      // Convert doc position to text position
+      // Check if the cursor is in AI-authored text by checking marks at position
       const { from } = editor.state.selection;
-      let textPos = 0;
-      let isFirstBlock = true;
+      const $pos = editor.state.doc.resolve(from);
       
-      editor.state.doc.descendants((node, pos) => {
-        if (pos >= from) return false; // Stop when we've passed the cursor
-        
-        if (node.isBlock && node.isTextblock) {
-          if (!isFirstBlock) {
-            textPos += 2; // Account for \n\n between paragraphs
-          }
-          isFirstBlock = false;
-        }
-        if (node.isText && node.text) {
-          const nodeEnd = pos + node.text.length;
-          if (from <= nodeEnd) {
-            textPos += from - pos;
-            return false;
-          }
-          textPos += node.text.length;
-        }
-        return true;
-      });
+      // Check marks at cursor position
+      const marks = $pos.marks();
+      const aiMark = marks.find(m => m.type.name === 'aiAuthored');
       
-      const authorInfo = getAuthorAtPosition(textPos, selectedStory.authorshipSpans || []);
-      setCursorAuthor(authorInfo);
+      if (aiMark) {
+        setCursorAuthor({ 
+          author: 'ai', 
+          modelId: aiMark.attrs.modelId 
+        });
+      } else {
+        setCursorAuthor({ author: 'user' });
+      }
     },
     onUpdate: ({ editor }) => {
       if (isUpdatingRef.current) return;
       
-      const newContentWithBreaks = editor.getText({ blockSeparator: '\n\n' });
+      const htmlContent = editor.getHTML();
+      const plainText = editor.getText({ blockSeparator: '\n\n' });
       
-      if (selectedStory && newContentWithBreaks !== lastSavedContentRef.current) {
-        // Calculate what changed for authorship tracking
-        const oldContent = lastSavedContentRef.current;
-        
-        // Find the first position where content differs
-        let changeStart = 0;
-        while (
-          changeStart < oldContent.length &&
-          changeStart < newContentWithBreaks.length &&
-          oldContent[changeStart] === newContentWithBreaks[changeStart]
-        ) {
-          changeStart++;
-        }
-        
-        // Find the last position where content differs
-        let oldEnd = oldContent.length;
-        let newEnd = newContentWithBreaks.length;
-        while (
-          oldEnd > changeStart &&
-          newEnd > changeStart &&
-          oldContent[oldEnd - 1] === newContentWithBreaks[newEnd - 1]
-        ) {
-          oldEnd--;
-          newEnd--;
-        }
-        
-        const removedLength = oldEnd - changeStart;
-        const addedLength = newEnd - changeStart;
-        
-        // Update authorship spans
-        let updatedSpans = updateSpansOnEdit(
-          selectedStory.authorshipSpans,
-          changeStart,
-          removedLength,
-          addedLength
-        );
-        
-        // Mark new content as user-authored
-        if (addedLength > 0) {
-          updatedSpans.push({
-            start: changeStart,
-            end: changeStart + addedLength,
-            author: 'user',
-          });
-          updatedSpans = normalizeAuthorshipSpans(updatedSpans);
-        }
-        
+      if (selectedStory && htmlContent !== lastSavedHtmlRef.current) {
         // Schedule auto-save
         if (autoSaveTimerRef.current) {
           clearTimeout(autoSaveTimerRef.current);
@@ -269,18 +108,14 @@ export function StoryEditor() {
         
         autoSaveTimerRef.current = setTimeout(() => {
           updateStory(selectedStory.id, {
-            content: newContentWithBreaks,
-            authorshipSpans: updatedSpans,
+            content: plainText,
+            htmlContent: htmlContent,
           });
-          lastSavedContentRef.current = newContentWithBreaks;
-        }, 5000); // Auto-save every 5 seconds
+          lastSavedHtmlRef.current = htmlContent;
+        }, 1000); // Auto-save after 1 second of inactivity
         
-        // Immediate save for span tracking (content will be debounced)
-        updateStory(selectedStory.id, {
-          content: newContentWithBreaks,
-          authorshipSpans: updatedSpans,
-        });
-        lastSavedContentRef.current = newContentWithBreaks;
+        // Update the ref immediately to track changes
+        lastSavedHtmlRef.current = htmlContent;
       }
     },
   });
@@ -288,32 +123,18 @@ export function StoryEditor() {
   // Update editor content when story changes
   useEffect(() => {
     if (editor && selectedStory) {
-      const currentContent = editor.getText({ blockSeparator: '\n\n' });
-      if (currentContent !== selectedStory.content) {
+      const targetContent = getEditorContent();
+      const currentContent = editor.getHTML();
+      
+      // Only update if content is different
+      if (currentContent !== targetContent) {
         isUpdatingRef.current = true;
-        editor.commands.setContent(textToHtml(selectedStory.content || ''));
-        lastSavedContentRef.current = selectedStory.content;
+        editor.commands.setContent(targetContent);
+        lastSavedHtmlRef.current = targetContent;
         isUpdatingRef.current = false;
       }
-      
-      // Always update authorship spans and force decoration refresh
-      setAuthorshipSpans(selectedStory.authorshipSpans || []);
-      // Force editor to re-render decorations after content is set
-      setTimeout(() => {
-        if (editor && !editor.isDestroyed) {
-          editor.view.dispatch(editor.state.tr);
-        }
-      }, 0);
     }
-  }, [editor, selectedStory?.id, selectedStory?.content]);
-  
-  // Also update spans when they change (e.g., during generation)
-  useEffect(() => {
-    if (selectedStory && editor && !editor.isDestroyed) {
-      setAuthorshipSpans(selectedStory.authorshipSpans || []);
-      editor.view.dispatch(editor.state.tr);
-    }
-  }, [editor, selectedStory?.id, JSON.stringify(selectedStory?.authorshipSpans)]);
+  }, [editor, selectedStory?.id, selectedStory?.htmlContent, getEditorContent]);
   
   // Update editable state when generating
   useEffect(() => {
@@ -404,13 +225,12 @@ export function StoryEditor() {
       
       {/* Authorship Footer */}
       <div className="px-6 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-600">
-        {cursorAuthor.author === 'ai' && (
+        {cursorAuthor.author === 'ai' ? (
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-blue-400"></span>
             Generated by {getModelName(cursorAuthor.modelId)}
           </span>
-        )}
-        {(cursorAuthor.author === null || cursorAuthor.author === 'user') && (
+        ) : (
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-gray-400"></span>
             Written by you

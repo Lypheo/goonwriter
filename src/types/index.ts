@@ -19,14 +19,13 @@ export interface Story {
   id: string;
   collectionId: string;
   name: string;
-  content: string;
-  authorshipSpans: AuthorshipSpan[];
+  content: string; // Plain text content (for display/export)
+  htmlContent: string; // HTML with authorship marks (source of truth)
   createdAt: number;
   updatedAt: number;
 }
 
-// Efficiently stores authorship info without per-character annotation
-// Each span covers a range of characters with the same author
+// Legacy interface - kept for migration
 export interface AuthorshipSpan {
   start: number; // Start character index (inclusive)
   end: number;   // End character index (exclusive)

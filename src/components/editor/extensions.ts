@@ -1,16 +1,28 @@
 import { Extension, Mark } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import { SPECIAL_TOKENS, type AuthorshipSpan } from '../../types';
+import { SPECIAL_TOKENS } from '../../types';
 
-// Mark for AI-authored text (kept for potential future use)
+// Mark for AI-authored text - this is the robust way to track authorship
+// Marks persist through all text operations (cut, paste, undo, etc.)
 export const AiAuthored = Mark.create({
   name: 'aiAuthored',
+  
+  // Don't extend the mark when typing at its boundaries
+  inclusive: false,
+  
+  // Allow the mark to be removed without affecting other marks
+  excludes: '',
   
   addAttributes() {
     return {
       modelId: {
         default: null,
+        parseHTML: element => element.getAttribute('data-model-id'),
+        renderHTML: attributes => {
+          if (!attributes.modelId) return {};
+          return { 'data-model-id': attributes.modelId };
+        },
       },
     };
   },
@@ -26,18 +38,69 @@ export const AiAuthored = Mark.create({
   renderHTML({ HTMLAttributes }) {
     return ['span', { ...HTMLAttributes, 'data-ai-authored': 'true', class: 'ai-authored' }, 0];
   },
+  
+  // Add a plugin to remove AI marks from user-typed content
+  addProseMirrorPlugins() {
+    const markType = this.type;
+    
+    return [
+      new Plugin({
+        key: new PluginKey('aiAuthoredInput'),
+        
+        // Handle text input - remove AI mark from typed characters
+        props: {
+          handleTextInput(view, from, to, text) {
+            const { state } = view;
+            const $from = state.doc.resolve(from);
+            
+            // Check if we're typing inside AI-authored text
+            const hasAiMark = $from.marks().some(m => m.type.name === 'aiAuthored');
+            
+            if (hasAiMark) {
+              // Insert text without the AI mark
+              const tr = state.tr;
+              tr.insertText(text, from, to);
+              
+              // Remove the AI mark from the inserted text
+              const insertEnd = from + text.length;
+              tr.removeMark(from, insertEnd, markType);
+              
+              view.dispatch(tr);
+              return true; // Handled
+            }
+            
+            return false; // Let default handling occur
+          },
+          
+          // Handle paste - remove AI mark from pasted content when inside AI text
+          handlePaste(view, event, slice) {
+            const { state } = view;
+            const { from, to } = state.selection;
+            const $from = state.doc.resolve(from);
+            
+            // Check if we're pasting inside AI-authored text
+            const hasAiMark = $from.marks().some(m => m.type.name === 'aiAuthored');
+            
+            if (hasAiMark) {
+              // Let default paste happen, then remove the mark
+              const tr = state.tr;
+              tr.replaceSelection(slice);
+              
+              // Calculate where the pasted content ends
+              const insertEnd = from + slice.content.size;
+              tr.removeMark(from, insertEnd, markType);
+              
+              view.dispatch(tr);
+              return true;
+            }
+            
+            return false;
+          },
+        },
+      }),
+    ];
+  },
 });
-
-// Storage for authorship spans - will be updated from React
-let currentAuthorshipSpans: AuthorshipSpan[] = [];
-
-export function setAuthorshipSpans(spans: AuthorshipSpan[]) {
-  currentAuthorshipSpans = spans;
-}
-
-export function getAuthorshipSpans(): AuthorshipSpan[] {
-  return currentAuthorshipSpans;
-}
 
 // Find all special tokens in text with document positions
 function findSpecialTokensWithPositions(
@@ -204,67 +267,6 @@ export const StoryDecorations = Extension.create({
             const { doc } = state;
             const decorations: Decoration[] = [];
             
-            // Build text with positions for mapping
-            // This needs to match how content is stored (with \n\n between paragraphs)
-            let fullText = '';
-            const textToDocPos: number[] = [];
-            let isFirstBlock = true;
-            
-            doc.descendants((node, pos) => {
-              if (node.isBlock && node.isTextblock) {
-                // Add paragraph separator for non-first blocks (matching \n\n in stored content)
-                if (!isFirstBlock) {
-                  // These positions don't map to doc positions, use -1 as placeholder
-                  textToDocPos.push(-1); // \n
-                  textToDocPos.push(-1); // \n
-                  fullText += '\n\n';
-                }
-                isFirstBlock = false;
-              }
-              if (node.isText && node.text) {
-                for (let i = 0; i < node.text.length; i++) {
-                  textToDocPos.push(pos + i);
-                  fullText += node.text[i];
-                }
-              }
-              return true;
-            });
-            
-            // Apply authorship span decorations (AI-authored text)
-            const authorshipSpans = getAuthorshipSpans();
-            console.log('Authorship spans:', authorshipSpans, 'Full text length:', fullText.length);
-            for (const span of authorshipSpans) {
-              if (span.author === 'ai' && span.start < span.end) {
-                // Find valid doc positions within the span range
-                let fromDocPos: number | undefined;
-                let toDocPos: number | undefined;
-                
-                // Find first valid position >= span.start
-                for (let i = span.start; i < Math.min(span.end, textToDocPos.length); i++) {
-                  if (textToDocPos[i] !== -1) {
-                    fromDocPos = textToDocPos[i];
-                    break;
-                  }
-                }
-                
-                // Find last valid position < span.end
-                for (let i = Math.min(span.end - 1, textToDocPos.length - 1); i >= span.start; i--) {
-                  if (textToDocPos[i] !== -1) {
-                    toDocPos = textToDocPos[i];
-                    break;
-                  }
-                }
-                
-                if (fromDocPos !== undefined && toDocPos !== undefined && fromDocPos <= toDocPos) {
-                  decorations.push(
-                    Decoration.inline(fromDocPos, toDocPos + 1, {
-                      class: 'ai-authored',
-                    })
-                  );
-                }
-              }
-            }
-            
             // Find special tokens with correct positions
             const tokens = findSpecialTokensWithPositions(doc);
             
@@ -286,27 +288,6 @@ export const StoryDecorations = Extension.create({
             
             // Apply think content styling
             for (const range of thinkRanges) {
-              // Map text positions to doc positions
-              let fromDocPos: number | undefined;
-              let toDocPos: number | undefined;
-              
-              // Find first valid position >= range.from
-              for (let i = 0; i < textToDocPos.length && textToDocPos.length > 0; i++) {
-                if (textToDocPos[i] !== -1 && textToDocPos[i] >= range.from) {
-                  fromDocPos = textToDocPos[i];
-                  break;
-                }
-              }
-              
-              // Find last valid position < range.to
-              for (let i = textToDocPos.length - 1; i >= 0; i--) {
-                if (textToDocPos[i] !== -1 && textToDocPos[i] < range.to) {
-                  toDocPos = textToDocPos[i];
-                  break;
-                }
-              }
-              
-              // Use direct doc positions from token positions
               decorations.push(
                 Decoration.inline(range.from, range.to, {
                   class: 'think-content',
