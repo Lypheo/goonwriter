@@ -6,6 +6,8 @@ By editing or prefilling the model's reasoning or response, the LLM can be steer
 
 This is inspired by [mikupad](https://github.com/lmg-anon/mikupad/) and [KoboldAI lite](https://github.com/LostRuins/lite.koboldai.net), which do basically the same thing, except with a (imo) worse UI for model config and session management.
 
+<img width="2251" height="1282" alt="image" src="https://github.com/user-attachments/assets/3eaae2ce-1c8a-488c-aa81-c34bad516b6f" />
+
 100% written by Claude, so here's how it describes this tool:
 
 ---------------------------------------------------------------------
