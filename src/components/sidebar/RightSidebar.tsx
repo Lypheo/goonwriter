@@ -28,6 +28,12 @@ const StopIcon = () => (
   </svg>
 );
 
+const HelpIcon = () => (
+  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
 export function RightSidebar() {
   const {
     models,
@@ -44,6 +50,8 @@ export function RightSidebar() {
   
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
+  const [autoCloseThink, setAutoCloseThink] = useState(true);
+  const [showHelp, setShowHelp] = useState(false);
   
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
@@ -109,7 +117,8 @@ export function RightSidebar() {
             stopGeneration();
           },
         },
-        abortController.signal
+        abortController.signal,
+        { autoCloseThink }
       );
     } catch (error) {
       setResponseMetadata({
@@ -131,9 +140,30 @@ export function RightSidebar() {
   return (
     <div className="w-72 h-full bg-gray-50 border-l border-gray-200 flex flex-col">
       {/* Header */}
-      <div className="p-3 border-b border-gray-200">
+      <div className="p-3 border-b border-gray-200 flex items-center justify-between">
         <h2 className="font-semibold text-gray-800">LLM Controls</h2>
+        <button
+          onClick={() => setShowHelp(!showHelp)}
+          className="p-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
+          title="Help - Special Tokens"
+        >
+          <HelpIcon />
+        </button>
       </div>
+      
+      {/* Help Panel */}
+      {showHelp && (
+        <div className="p-3 border-b border-gray-200 bg-blue-50 text-xs">
+          <h3 className="font-semibold text-gray-700 mb-2">Special Placeholder Tokens</h3>
+          <p className="text-gray-600 mb-2">Use these tokens in your story. They will be replaced with model-specific tags when sent to the API:</p>
+          <ul className="space-y-1 text-gray-600 font-mono text-[10px]">
+            <li><code className="bg-yellow-100 px-1 rounded">{`<<start_sys_prompt>>`}</code> / <code className="bg-yellow-100 px-1 rounded">{`<<end_sys_prompt>>`}</code></li>
+            <li><code className="bg-blue-100 px-1 rounded">{`<<start_user>>`}</code> / <code className="bg-blue-100 px-1 rounded">{`<<end_user>>`}</code></li>
+            <li><code className="bg-green-100 px-1 rounded">{`<<start_ai>>`}</code> / <code className="bg-green-100 px-1 rounded">{`<<end_ai>>`}</code></li>
+            <li><code className="bg-purple-100 px-1 rounded">{`<think>`}</code> / <code className="bg-purple-100 px-1 rounded">{`</think>`}</code></li>
+          </ul>
+        </div>
+      )}
       
       {/* Model Selection */}
       <div className="p-3 border-b border-gray-200">
@@ -202,6 +232,18 @@ export function RightSidebar() {
       
       {/* Generate Button */}
       <div className="p-3 border-b border-gray-200">
+        <label 
+          className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
+          title="When enabled, automatically inserts a closing </think> tag when the model transitions from reasoning to text output. Often needed because most providers don't transmit </think> tokens."
+        >
+          <input
+            type="checkbox"
+            checked={autoCloseThink}
+            onChange={(e) => setAutoCloseThink(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <span>Auto-close think tags</span>
+        </label>
         {!isGenerating ? (
           <Button
             className="w-full"

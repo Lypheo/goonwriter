@@ -151,13 +151,18 @@ export interface GenerationCallbacks {
   onComplete: () => void;
 }
 
+export interface StreamOptions {
+  autoCloseThink?: boolean;
+}
+
 // Stream completion from the API
 export async function streamCompletion(
   model: ModelConfig,
   prompt: string,
   samplingParams: SamplingParams,
   callbacks: GenerationCallbacks,
-  abortSignal: AbortSignal
+  abortSignal: AbortSignal,
+  options: StreamOptions = {}
 ): Promise<void> {
   const url = `${model.baseUrl.replace(/\/$/, '')}/completions`;
   const body = buildRequestBody(model, prompt, samplingParams);
@@ -187,6 +192,8 @@ export async function streamCompletion(
     
     const decoder = new TextDecoder();
     let buffer = '';
+    let isReasoning = false;
+    let hasClosedThink = false;
     
     while (true) {
       const { done, value } = await reader.read();
@@ -213,10 +220,27 @@ export async function streamCompletion(
           // Update metadata
           callbacks.onMetadata(parsed);
           
-          // Extract and send text (can be in 'text' and/or 'reasoning' property)
-          const reasoning = parsed.choices?.[0]?.reasoning || '';
+          // Extract text (can be in 'text' and/or 'reasoning' property)
+          const reasoning = (parsed.choices?.[0]?.reasoning as string) || '';
           const textContent = parsed.choices?.[0]?.text || '';
-          const rawText = reasoning + textContent;
+          
+          // Track reasoning state
+          if (reasoning && !isReasoning) {
+            isReasoning = true;
+          }
+          
+          // Build output text
+          let rawText = reasoning;
+          
+          // If we were reasoning and now have text content, prepend closing think tag
+          if (textContent) {
+            if (options.autoCloseThink && isReasoning && !hasClosedThink) {
+              rawText += SPECIAL_TOKENS.END_THINK;
+              hasClosedThink = true;
+            }
+            rawText += textContent;
+          }
+          
           if (rawText) {
             const text = replaceModelTokensWithPlaceholders(
               rawText,
@@ -233,9 +257,26 @@ export async function streamCompletion(
       const parsed = parseSSELine(buffer);
       if (parsed && parsed !== 'done') {
         callbacks.onMetadata(parsed);
-        const reasoning = parsed.choices?.[0]?.reasoning || '';
+        const reasoning = (parsed.choices?.[0]?.reasoning as string) || '';
         const textContent = parsed.choices?.[0]?.text || '';
-        const rawText = reasoning + textContent;
+        
+        // Track reasoning state
+        if (reasoning && !isReasoning) {
+          isReasoning = true;
+        }
+        
+        // Build output text
+        let rawText = reasoning;
+        
+        // If we were reasoning and now have text content, prepend closing think tag
+        if (textContent) {
+          if (options.autoCloseThink && isReasoning && !hasClosedThink) {
+            rawText += SPECIAL_TOKENS.END_THINK;
+            hasClosedThink = true;
+          }
+          rawText += textContent;
+        }
+        
         if (rawText) {
           const text = replaceModelTokensWithPlaceholders(
             rawText,
