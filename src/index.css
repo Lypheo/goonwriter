@@ -21,15 +21,14 @@
 .story-editor .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
-  color: #9ca3af;
+  color: #a5acb87e;
   pointer-events: none;
   height: 0;
 }
 
 /* AI-authored text styling */
 .story-editor .ai-authored {
-  background-color: rgba(59, 130, 246, 0.08);
-  border-bottom: 1px dotted rgba(59, 130, 246, 0.4);
+  background-color: rgb(202 212 225 / 29%);
 }
 
 /* Special token styles */
@@ -80,17 +79,17 @@
   height: 100%;
 }
 
-/* Section background styles */
+/* Section background styles - disabled, using ai-authored instead */
 .story-editor .section-system {
-  background-color: rgba(254, 243, 199, 0.3);
+  /* background removed */
 }
 
 .story-editor .section-user {
-  background-color: rgba(219, 234, 254, 0.3);
+  /* background removed */
 }
 
 .story-editor .section-ai {
-  background-color: rgba(243, 244, 246, 0.5);
+  /* background removed */
 }
 
 /* Markdown formatting styles */

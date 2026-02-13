@@ -1,4 +1,3 @@
-import React from 'react';
 import { useGenerationStore } from '../../stores';
 
 export function ResponseMetadata() {

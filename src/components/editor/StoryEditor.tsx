@@ -6,7 +6,7 @@ import Text from '@tiptap/extension-text';
 import Placeholder from '@tiptap/extension-placeholder';
 import HardBreak from '@tiptap/extension-hard-break';
 import { useDataStore, useAppStore, useGenerationStore } from '../../stores';
-import { StoryDecorations } from './extensions';
+import { StoryDecorations, setAuthorshipSpans } from './extensions';
 import type { AuthorshipSpan } from '../../types';
 
 // Escape HTML entities to prevent angle brackets from being interpreted as tags
@@ -103,9 +103,16 @@ function updateSpansOnEdit(
         end: span.end + delta,
       });
     } else if (span.start < changeStart && span.end > changeEnd) {
-      // Change is within span - adjust end
+      // Change is within span - split into two parts (before and after)
+      // Part before the change
       updated.push({
         ...span,
+        end: changeStart,
+      });
+      // Part after the change (shifted by delta)
+      updated.push({
+        ...span,
+        start: changeStart + addedLength,
         end: span.end + delta,
       });
     } else if (span.start >= changeStart && span.end <= changeEnd) {
@@ -139,6 +146,11 @@ export function StoryEditor() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedContentRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
+  
+  // Set initial authorship spans before editor creation
+  if (selectedStory) {
+    setAuthorshipSpans(selectedStory.authorshipSpans || []);
+  }
   
   const editor = useEditor({
     extensions: [
@@ -238,8 +250,25 @@ export function StoryEditor() {
         lastSavedContentRef.current = selectedStory.content;
         isUpdatingRef.current = false;
       }
+      
+      // Always update authorship spans and force decoration refresh
+      setAuthorshipSpans(selectedStory.authorshipSpans || []);
+      // Force editor to re-render decorations after content is set
+      setTimeout(() => {
+        if (editor && !editor.isDestroyed) {
+          editor.view.dispatch(editor.state.tr);
+        }
+      }, 0);
     }
   }, [editor, selectedStory?.id, selectedStory?.content]);
+  
+  // Also update spans when they change (e.g., during generation)
+  useEffect(() => {
+    if (selectedStory && editor && !editor.isDestroyed) {
+      setAuthorshipSpans(selectedStory.authorshipSpans || []);
+      editor.view.dispatch(editor.state.tr);
+    }
+  }, [editor, selectedStory?.id, JSON.stringify(selectedStory?.authorshipSpans)]);
   
   // Update editable state when generating
   useEffect(() => {
@@ -319,19 +348,6 @@ export function StoryEditor() {
             className="story-editor prose prose-lg max-w-none"
           />
         </div>
-      </div>
-      
-      {/* Authorship Legend */}
-      <div className="px-6 py-2 border-t border-gray-200 bg-gray-50 flex items-center gap-4 text-xs">
-        <span className="text-gray-500">Authorship:</span>
-        <span className="flex items-center gap-1">
-          <span className="w-3 h-3 bg-white border border-gray-300 rounded"></span>
-          <span className="text-gray-600">User</span>
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-3 h-3 bg-blue-50 border border-blue-200 rounded"></span>
-          <span className="text-gray-600">AI Generated</span>
-        </span>
       </div>
     </div>
   );

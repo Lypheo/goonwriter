@@ -1,9 +1,9 @@
 import { Extension, Mark } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import { SPECIAL_TOKENS, type SectionType } from '../../types';
+import { SPECIAL_TOKENS, type AuthorshipSpan } from '../../types';
 
-// Mark for AI-authored text
+// Mark for AI-authored text (kept for potential future use)
 export const AiAuthored = Mark.create({
   name: 'aiAuthored',
   
@@ -28,24 +28,15 @@ export const AiAuthored = Mark.create({
   },
 });
 
-// Determine section type based on content
-function getSectionType(text: string, position: number): SectionType {
-  // Find the last opening token before position
-  const beforeText = text.slice(0, position);
-  
-  const sysStart = beforeText.lastIndexOf(SPECIAL_TOKENS.START_SYS_PROMPT);
-  const sysEnd = beforeText.lastIndexOf(SPECIAL_TOKENS.END_SYS_PROMPT);
-  const userStart = beforeText.lastIndexOf(SPECIAL_TOKENS.START_USER);
-  const userEnd = beforeText.lastIndexOf(SPECIAL_TOKENS.END_USER);
-  const aiStart = beforeText.lastIndexOf(SPECIAL_TOKENS.START_AI);
-  const aiEnd = beforeText.lastIndexOf(SPECIAL_TOKENS.END_AI);
-  
-  // Check if we're inside any section
-  if (sysStart > sysEnd && sysStart !== -1) return 'system';
-  if (userStart > userEnd && userStart !== -1) return 'user';
-  if (aiStart > aiEnd && aiStart !== -1) return 'ai';
-  
-  return 'default';
+// Storage for authorship spans - will be updated from React
+let currentAuthorshipSpans: AuthorshipSpan[] = [];
+
+export function setAuthorshipSpans(spans: AuthorshipSpan[]) {
+  currentAuthorshipSpans = spans;
+}
+
+export function getAuthorshipSpans(): AuthorshipSpan[] {
+  return currentAuthorshipSpans;
 }
 
 // Find all special tokens in text with document positions
@@ -211,6 +202,67 @@ export const StoryDecorations = Extension.create({
             const { doc } = state;
             const decorations: Decoration[] = [];
             
+            // Build text with positions for mapping
+            // This needs to match how content is stored (with \n\n between paragraphs)
+            let fullText = '';
+            const textToDocPos: number[] = [];
+            let isFirstBlock = true;
+            
+            doc.descendants((node, pos) => {
+              if (node.isBlock && node.isTextblock) {
+                // Add paragraph separator for non-first blocks (matching \n\n in stored content)
+                if (!isFirstBlock) {
+                  // These positions don't map to doc positions, use -1 as placeholder
+                  textToDocPos.push(-1); // \n
+                  textToDocPos.push(-1); // \n
+                  fullText += '\n\n';
+                }
+                isFirstBlock = false;
+              }
+              if (node.isText && node.text) {
+                for (let i = 0; i < node.text.length; i++) {
+                  textToDocPos.push(pos + i);
+                  fullText += node.text[i];
+                }
+              }
+              return true;
+            });
+            
+            // Apply authorship span decorations (AI-authored text)
+            const authorshipSpans = getAuthorshipSpans();
+            console.log('Authorship spans:', authorshipSpans, 'Full text length:', fullText.length);
+            for (const span of authorshipSpans) {
+              if (span.author === 'ai' && span.start < span.end) {
+                // Find valid doc positions within the span range
+                let fromDocPos: number | undefined;
+                let toDocPos: number | undefined;
+                
+                // Find first valid position >= span.start
+                for (let i = span.start; i < Math.min(span.end, textToDocPos.length); i++) {
+                  if (textToDocPos[i] !== -1) {
+                    fromDocPos = textToDocPos[i];
+                    break;
+                  }
+                }
+                
+                // Find last valid position < span.end
+                for (let i = Math.min(span.end - 1, textToDocPos.length - 1); i >= span.start; i--) {
+                  if (textToDocPos[i] !== -1) {
+                    toDocPos = textToDocPos[i];
+                    break;
+                  }
+                }
+                
+                if (fromDocPos !== undefined && toDocPos !== undefined && fromDocPos <= toDocPos) {
+                  decorations.push(
+                    Decoration.inline(fromDocPos, toDocPos + 1, {
+                      class: 'ai-authored',
+                    })
+                  );
+                }
+              }
+            }
+            
             // Find special tokens with correct positions
             const tokens = findSpecialTokensWithPositions(doc);
             for (const token of tokens) {
@@ -240,47 +292,6 @@ export const StoryDecorations = Extension.create({
                   class: `md-${fmt.type}`,
                 })
               );
-            }
-            
-            // Find section backgrounds
-            // Build text with positions
-            let fullText = '';
-            const textToDocPos: number[] = [];
-            
-            doc.descendants((node, pos) => {
-              if (node.isText && node.text) {
-                for (let i = 0; i < node.text.length; i++) {
-                  textToDocPos.push(pos + i);
-                  fullText += node.text[i];
-                }
-              }
-              return true;
-            });
-            
-            // Track sections
-            let currentSection: SectionType = 'default';
-            let sectionStartDocPos = 1; // Start of document content
-            
-            for (let i = 0; i <= fullText.length; i++) {
-              const newSection = getSectionType(fullText, i);
-              if (newSection !== currentSection || i === fullText.length) {
-                const startDocPos = i === 0 ? 1 : (textToDocPos[sectionStartDocPos] ?? 1);
-                const endDocPos = i === fullText.length 
-                  ? (textToDocPos[i - 1] !== undefined ? textToDocPos[i - 1] + 1 : 1)
-                  : (textToDocPos[i] ?? 1);
-                
-                if (sectionStartDocPos < i && currentSection !== 'default' && startDocPos < endDocPos) {
-                  decorations.push(
-                    Decoration.inline(
-                      textToDocPos[sectionStartDocPos] ?? 1,
-                      textToDocPos[i - 1] !== undefined ? textToDocPos[i - 1] + 1 : endDocPos,
-                      { class: `section-${currentSection}` }
-                    )
-                  );
-                }
-                currentSection = newSection;
-                sectionStartDocPos = i;
-              }
             }
             
             return DecorationSet.create(doc, decorations);
