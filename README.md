@@ -1,29 +1,48 @@
-# GoonWriter - Branching Story Editor
+# GoonWriter
 
-A web-based branching story writing tool built with React, TypeScript, and TipTap. Write stories with the ability to branch the narrative at any point, creating a tree structure of story drafts.
+Basically just a simple LLM frontend, with the main difference to other frontends being that it's built around the text completion endpoint (/completions) rather than chat completions.
+This gives the user full control over every single token sent to the LLM and allows the user to edit any part of the conversation, crucially including the model's reasoning.
+By editing or prefilling the model's reasoning or response, the LLM can be steered accurately you want and censorship is easily circumvented.
+
+This is inspired by [mikupad](https://github.com/lmg-anon/mikupad/) and [KoboldAI lite](https://github.com/LostRuins/lite.koboldai.net), which do basically the same thing, except with a (imo) worse UI for model config and session management.
+
+100% written by Claude, so here's how it describes this tool:
+
+---------------------------------------------------------------------
+
+A co-writing web application with LLM integration. Write stories with AI assistance, track authorship, and manage prompts with customizable instruction templates.
 
 ## Features
 
-### Story Organization
-- **Story Groups**: Organize stories into named groups
-- **Story Trees**: Each story is a tree structure of nodes
-- **Full CRUD**: Create, rename, duplicate, move, and delete stories and groups
+### LLM Integration
+- **Multiple Model Configs**: Configure multiple LLM endpoints with custom base URLs and API tokens
+- **Instruction Templates**: Define model-specific tags for system prompts, user/assistant turns, and thinking blocks
+- **Streaming Responses**: Real-time streaming with words-per-second tracking
+- **Usage Tracking**: View token counts and costs per generation
+- **Provider Settings**: Filter by allowed/banned providers and quantizations
 
-### Branching
-- **Branch from Current**: Create a new branch continuing from the current node
-- **Branch at Position**: Right-click any text position to branch from that point
-- **Automatic Node Splitting**: When branching mid-node, the system automatically splits the node and reparents children
-- **Frozen Nodes**: Non-leaf nodes are frozen (editing creates a new child branch)
-- **Chain Merging**: Merge simple chains of nodes with no forks
+### Special Tokens
+Use placeholder tokens in your stories that get replaced with model-specific tags:
+- `<<start_sys_prompt>>` / `<<end_sys_prompt>>` - System prompt boundaries
+- `<<start_user>>` / `<<end_user>>` - User turn markers
+- `<<start_ai>>` / `<<end_ai>>` - Assistant turn markers
+- `<think>` / `</think>` - Reasoning/thinking blocks
 
 ### Editor
-- **WYSIWYG Editor**: TipTap-based rich text editor with markdown support
-- **Branch Point Indicators**: Visual markers showing where ancestor nodes end
-- **Auto-branching**: Typing in a frozen node automatically creates a new branch
+- **TipTap-based**: Rich text editor with markdown support
+- **Authorship Tracking**: Visual distinction between human-written and AI-generated text
+- **Syntax Highlighting**: Special tokens displayed with color-coded styling
+- **Think Block Styling**: Reasoning content styled distinctly (italic, muted)
 
-### Storage
-- **Local Storage**: All data persisted in browser localStorage
-- **JSON Format**: Stories stored as JSON for easy backup/export
+### Story Organization
+- **Groups & Collections**: Hierarchical organization of stories
+- **File-based Persistence**: Stories saved to server-side JSON files
+
+### Sampling Parameters
+- Temperature, Top-P, Top-K, Min-P
+- Repetition penalty with configurable window
+- Frequency and presence penalties
+- Max tokens control
 
 ## Getting Started
 
@@ -31,55 +50,62 @@ A web-based branching story writing tool built with React, TypeScript, and TipTa
 # Install dependencies
 npm install
 
-# Start development server
-npm run dev
+# Start both frontend and backend
+npm run dev:all
 
-# Build for production
-npm run build
+# Or run separately:
+npm run dev        # Frontend only (port 5173)
+npm run server     # Backend only (port 3001)
 ```
+
+## Configuration
+
+### Adding a Model
+
+1. Click the settings icon next to the model dropdown
+2. Fill in:
+   - **Display Name**: Friendly name for the model
+   - **Base URL**: API endpoint (e.g., `https://openrouter.ai/api/v1`)
+   - **Token**: Your API key
+   - **Model ID**: The model identifier (e.g., `anthropic/claude-3-opus`)
+3. Configure instruction template tags for your model's format
+
+### Auto-close Think Tags
+
+Enable the "Auto-close think tags" checkbox to automatically insert `</think>` when the model transitions from reasoning to regular output. Useful for models that stream reasoning content separately.
+
+## Technology Stack
+
+- **React 19** + **TypeScript** - Frontend
+- **Vite** - Build tool with HMR
+- **TipTap / ProseMirror** - Rich text editor
+- **Zustand** - State management
+- **Tailwind CSS 4** - Styling
+- **Express** - Backend server for persistence
 
 ## Project Structure
 
 ```
 src/
 ├── components/
-│   ├── StoryEditor.tsx      # TipTap editor component
-│   ├── StoryTreeView.tsx    # Tree visualization
-│   └── GroupsSidebar.tsx    # Story groups navigation
-├── stores/
-│   └── storyStore.ts        # Zustand state management
-├── types/
-│   └── index.ts             # TypeScript type definitions
-├── utils/
-│   ├── storage.ts           # localStorage utilities
-│   └── treeUtils.ts         # Tree manipulation utilities
-└── App.tsx                  # Main application component
+│   ├── editor/
+│   │   ├── StoryEditor.tsx    # Main editor with authorship tracking
+│   │   └── extensions.ts      # ProseMirror decorations
+│   ├── sidebar/
+│   │   ├── RightSidebar.tsx   # LLM controls & generation
+│   │   ├── ModelConfigDialog  # Model configuration
+│   │   └── SamplingParams     # Sampling parameter controls
+│   └── ui/                    # Reusable UI components
+├── services/
+│   └── llmService.ts          # Streaming completion & token handling
+├── stores/                    # Zustand stores
+└── types/                     # TypeScript definitions
+
+server/
+├── index.js                   # Express server
+└── data/                      # Persisted JSON data
 ```
 
-## Usage
+## License
 
-1. **Create a Group**: Click the + button in the Stories sidebar header
-2. **Create a Story**: Click the + button next to any group
-3. **Write**: Start typing in the editor
-4. **Branch**: 
-   - Click "Branch Here" to create a new branch from current position
-   - Right-click in text to branch at that position
-   - Click branch point markers to navigate to ancestors
-5. **Navigate**: Use the tree view on the right to navigate between nodes
-6. **Manage**: Double-click names to rename, use action buttons to delete/merge
-
-## Technology Stack
-
-- **React 19** - UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **TipTap** - Rich text editor
-- **Zustand** - State management
-- **Tailwind CSS** - Styling
-
-## Future Plans
-
-- LLM integration for AI-assisted writing
-- Export to various formats (Markdown, HTML, PDF)
-- Collaborative editing
-- Cloud sync
+MIT
