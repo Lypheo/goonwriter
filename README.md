@@ -2,9 +2,11 @@
 
 Basically just a simple LLM frontend, with the main difference to other frontends being that it's built around the text completion endpoint (/completions) rather than chat completions.
 This gives the user full control over every single token sent to the LLM and allows the user to edit any part of the conversation, crucially including the model's reasoning.
-By editing or prefilling the model's reasoning or response, the LLM can be steered accurately and censorship is easily circumvented.
+By editing or prefilling the model's reasoning or response, the LLM can be steered accurately and censorship is easily circumvented. (The flipside is, of course, that you to be careful to conform to the model's instruction template.)
 
 This is inspired by [mikupad](https://github.com/lmg-anon/mikupad/) and [KoboldAI lite](https://github.com/LostRuins/lite.koboldai.net), which do basically the same thing, except with a (imo) worse UI for model config and session management.
+
+<img width="2251" height="1282" alt="image" src="https://github.com/user-attachments/assets/3eaae2ce-1c8a-488c-aa81-c34bad516b6f" />
 
 100% written by Claude, so here's how it describes this tool:
 
