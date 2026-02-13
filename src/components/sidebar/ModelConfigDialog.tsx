@@ -26,6 +26,17 @@ export function ModelConfigDialog({ isOpen, onClose, editingModel }: ModelConfig
     instructionTemplate: editingModel?.instructionTemplate || { ...defaultInstructionTemplate },
   });
   
+  // Local state for comma-separated fields (to allow typing commas)
+  const [allowedProvidersText, setAllowedProvidersText] = useState(
+    editingModel?.instructionTemplate.allowedProviders.join(', ') || ''
+  );
+  const [bannedProvidersText, setBannedProvidersText] = useState(
+    editingModel?.instructionTemplate.bannedProviders.join(', ') || ''
+  );
+  const [allowedQuantizationsText, setAllowedQuantizationsText] = useState(
+    editingModel?.instructionTemplate.allowedQuantizations.join(', ') || ''
+  );
+  
   // Reset form when dialog opens/closes or editingModel changes
   React.useEffect(() => {
     if (isOpen) {
@@ -36,6 +47,9 @@ export function ModelConfigDialog({ isOpen, onClose, editingModel }: ModelConfig
         modelId: editingModel?.modelId || '',
         instructionTemplate: editingModel?.instructionTemplate || { ...defaultInstructionTemplate },
       });
+      setAllowedProvidersText(editingModel?.instructionTemplate.allowedProviders.join(', ') || '');
+      setBannedProvidersText(editingModel?.instructionTemplate.bannedProviders.join(', ') || '');
+      setAllowedQuantizationsText(editingModel?.instructionTemplate.allowedQuantizations.join(', ') || '');
     }
   }, [isOpen, editingModel]);
   
@@ -195,14 +209,16 @@ export function ModelConfigDialog({ isOpen, onClose, editingModel }: ModelConfig
           <div className="grid grid-cols-2 gap-4 mb-4">
             <Input
               label="Allowed Providers (comma-separated)"
-              value={formData.instructionTemplate.allowedProviders.join(', ')}
-              onChange={(e) => updateTemplate('allowedProviders', parseArrayValue(e.target.value))}
+              value={allowedProvidersText}
+              onChange={(e) => setAllowedProvidersText(e.target.value)}
+              onBlur={() => updateTemplate('allowedProviders', parseArrayValue(allowedProvidersText))}
               placeholder="DeepInfra, Together"
             />
             <Input
               label="Banned Providers (comma-separated)"
-              value={formData.instructionTemplate.bannedProviders.join(', ')}
-              onChange={(e) => updateTemplate('bannedProviders', parseArrayValue(e.target.value))}
+              value={bannedProvidersText}
+              onChange={(e) => setBannedProvidersText(e.target.value)}
+              onBlur={() => updateTemplate('bannedProviders', parseArrayValue(bannedProvidersText))}
               placeholder="OpenAI"
             />
           </div>
@@ -210,8 +226,9 @@ export function ModelConfigDialog({ isOpen, onClose, editingModel }: ModelConfig
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Allowed Quantizations (comma-separated)"
-              value={formData.instructionTemplate.allowedQuantizations.join(', ')}
-              onChange={(e) => updateTemplate('allowedQuantizations', parseArrayValue(e.target.value))}
+              value={allowedQuantizationsText}
+              onChange={(e) => setAllowedQuantizationsText(e.target.value)}
+              onBlur={() => updateTemplate('allowedQuantizations', parseArrayValue(allowedQuantizationsText))}
               placeholder="fp16, int8"
             />
             <Select

@@ -213,10 +213,13 @@ export async function streamCompletion(
           // Update metadata
           callbacks.onMetadata(parsed);
           
-          // Extract and send text
-          if (parsed.choices?.[0]?.text) {
+          // Extract and send text (can be in 'text' and/or 'reasoning' property)
+          const reasoning = parsed.choices?.[0]?.reasoning || '';
+          const textContent = parsed.choices?.[0]?.text || '';
+          const rawText = reasoning + textContent;
+          if (rawText) {
             const text = replaceModelTokensWithPlaceholders(
-              parsed.choices[0].text,
+              rawText,
               model.instructionTemplate
             );
             callbacks.onChunk(text, parsed);
@@ -230,9 +233,12 @@ export async function streamCompletion(
       const parsed = parseSSELine(buffer);
       if (parsed && parsed !== 'done') {
         callbacks.onMetadata(parsed);
-        if (parsed.choices?.[0]?.text) {
+        const reasoning = parsed.choices?.[0]?.reasoning || '';
+        const textContent = parsed.choices?.[0]?.text || '';
+        const rawText = reasoning + textContent;
+        if (rawText) {
           const text = replaceModelTokensWithPlaceholders(
-            parsed.choices[0].text,
+            rawText,
             model.instructionTemplate
           );
           callbacks.onChunk(text, parsed);
