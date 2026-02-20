@@ -120,6 +120,16 @@ export function RightSidebar() {
               nativeFinishReason: chunk.choices?.[0]?.native_finish_reason || null,
               usage: chunk.usage || null,
             });
+            
+            // Accumulate cost and tokens when usage info is available
+            if (chunk.usage) {
+              const currentCost = selectedStory.totalCost || 0;
+              const currentTokens = selectedStory.totalTokens || 0;
+              updateStory(selectedStory.id, {
+                totalCost: currentCost + (chunk.usage.cost || 0),
+                totalTokens: chunk.usage.total_tokens ?? currentTokens,
+              });
+            }
           },
           onError: (error) => {
             setResponseMetadata({ error });

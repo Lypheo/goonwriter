@@ -26,7 +26,7 @@ interface DataState {
   
   // Story CRUD
   createStory: (collectionId: string, name: string) => Story;
-  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent'>>) => void;
+  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => void;
   deleteStory: (id: string) => void;
   duplicateStory: (id: string) => Story | null;
   
@@ -187,6 +187,8 @@ export const useDataStore = create<DataState>()(
           name,
           content: '',
           htmlContent: '<p></p>',
+          totalCost: 0,
+          totalTokens: 0,
           createdAt: now,
           updatedAt: now,
         };
@@ -198,7 +200,7 @@ export const useDataStore = create<DataState>()(
         return story;
       },
       
-      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent'>>) => {
+      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => {
         set((state) => {
           const newStories = state.stories.map((s) =>
             s.id === id ? { ...s, ...updates, updatedAt: Date.now() } : s
@@ -226,6 +228,8 @@ export const useDataStore = create<DataState>()(
           id: uuidv4(),
           name: `${story.name} (copy)`,
           htmlContent: story.htmlContent || '',
+          totalCost: 0, // Reset cost for duplicated story
+          totalTokens: 0,
           createdAt: now,
           updatedAt: now,
         };

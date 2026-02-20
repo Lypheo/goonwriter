@@ -21,6 +21,8 @@ export interface Story {
   name: string;
   content: string; // Plain text content (for display/export)
   htmlContent: string; // HTML with authorship marks (source of truth)
+  totalCost: number; // Accumulated generation cost in USD
+  totalTokens: number; // Accumulated token usage
   createdAt: number;
   updatedAt: number;
 }
