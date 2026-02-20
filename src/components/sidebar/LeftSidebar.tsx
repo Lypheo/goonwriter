@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useDataStore, useAppStore } from '../../stores';
 import { Button, Input, Modal, ConfirmDialog } from '../ui/common';
 
@@ -84,6 +84,20 @@ export function LeftSidebar() {
   
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
+  
+  // Expand tree to show selected story on mount
+  useEffect(() => {
+    if (selectedStoryId) {
+      const story = stories.find(s => s.id === selectedStoryId);
+      if (story) {
+        const collection = collections.find(c => c.id === story.collectionId);
+        if (collection) {
+          setExpandedCollections(prev => new Set([...prev, collection.id]));
+          setExpandedGroups(prev => new Set([...prev, collection.groupId]));
+        }
+      }
+    }
+  }, []); // Run once on mount
   
   // Modal states
   const [showGroupModal, setShowGroupModal] = useState(false);

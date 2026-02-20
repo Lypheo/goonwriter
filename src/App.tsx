@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { LeftSidebar } from './components/sidebar/LeftSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
-import { useDataStore, useModelStore } from './stores';
+import { useDataStore, useModelStore, useAppStore } from './stores';
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -16,11 +16,14 @@ function App() {
         setIsLoading(true);
         setError(null);
         
-        // Initialize both stores
+        // Initialize data and model stores first
         await Promise.all([
           useDataStore.getState().initialize(),
           useModelStore.getState().initialize(),
         ]);
+        
+        // Then initialize app state (needs stories to be loaded first)
+        await useAppStore.getState().initializeAppState();
         
         setIsLoading(false);
       } catch (err) {

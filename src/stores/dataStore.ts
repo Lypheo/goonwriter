@@ -39,6 +39,7 @@ interface DataState {
 let saveGroupsTimeout: ReturnType<typeof setTimeout> | null = null;
 let saveCollectionsTimeout: ReturnType<typeof setTimeout> | null = null;
 let saveStoriesTimeout: ReturnType<typeof setTimeout> | null = null;
+let saveAppStateTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const debouncedSaveGroups = (groups: Group[]) => {
   if (saveGroupsTimeout) clearTimeout(saveGroupsTimeout);
@@ -53,6 +54,11 @@ const debouncedSaveCollections = (collections: Collection[]) => {
 const debouncedSaveStories = (stories: Story[]) => {
   if (saveStoriesTimeout) clearTimeout(saveStoriesTimeout);
   saveStoriesTimeout = setTimeout(() => saveData('stories', stories), 500);
+};
+
+const debouncedSaveAppState = (appState: { selectedStoryId: string | null }) => {
+  if (saveAppStateTimeout) clearTimeout(saveAppStateTimeout);
+  saveAppStateTimeout = setTimeout(() => saveData('appState', appState), 500);
 };
 
 export const useDataStore = create<DataState>()(
@@ -258,18 +264,43 @@ interface AppState {
   selectedGroupId: string | null;
   selectedCollectionId: string | null;
   selectedStoryId: string | null;
+  isAppStateInitialized: boolean;
   
+  initializeAppState: () => Promise<void>;
   setSelectedGroup: (id: string | null) => void;
   setSelectedCollection: (id: string | null) => void;
   setSelectedStory: (id: string | null) => void;
 }
 
-export const useAppStore = create<AppState>()((set) => ({
+export const useAppStore = create<AppState>()((set, get) => ({
   selectedGroupId: null,
   selectedCollectionId: null,
   selectedStoryId: null,
+  isAppStateInitialized: false,
+  
+  initializeAppState: async () => {
+    if (get().isAppStateInitialized) return;
+    
+    try {
+      const appState = await fetchData<{ selectedStoryId: string | null }>('appState');
+      if (appState?.selectedStoryId) {
+        // Verify the story still exists
+        const stories = useDataStore.getState().stories;
+        const storyExists = stories.some(s => s.id === appState.selectedStoryId);
+        if (storyExists) {
+          set({ selectedStoryId: appState.selectedStoryId });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load app state:', error);
+    }
+    set({ isAppStateInitialized: true });
+  },
   
   setSelectedGroup: (id) => set({ selectedGroupId: id }),
   setSelectedCollection: (id) => set({ selectedCollectionId: id }),
-  setSelectedStory: (id) => set({ selectedStoryId: id }),
+  setSelectedStory: (id) => {
+    set({ selectedStoryId: id });
+    debouncedSaveAppState({ selectedStoryId: id });
+  },
 }));
