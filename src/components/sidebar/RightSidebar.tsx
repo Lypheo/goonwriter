@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore } from '../../stores';
 import { streamCompletion } from '../../services/llmService';
-import type { ModelConfig } from '../../types';
 import { Button, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
@@ -59,7 +58,6 @@ export function RightSidebar() {
   const { selectedStoryId } = useAppStore();
   
   const [showModelDialog, setShowModelDialog] = useState(false);
-  const [editingModel, setEditingModel] = useState<ModelConfig | null>(null);
   const [autoCloseThink, setAutoCloseThink] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
   
@@ -193,37 +191,19 @@ export function RightSidebar() {
           <Button
             variant="ghost"
             size="md"
-            onClick={() => {
-              setEditingModel(null);
-              setShowModelDialog(true);
-            }}
+            onClick={() => setShowModelDialog(true)}
             title="Configure Models"
           >
             <SettingsIcon />
           </Button>
         </div>
         
-        {selectedModel && (
-          <button
-            className="mt-2 text-xs text-blue-600 hover:underline"
-            onClick={() => {
-              setEditingModel(selectedModel);
-              setShowModelDialog(true);
-            }}
-          >
-            Edit selected model
-          </button>
-        )}
-        
         {models.length === 0 && (
           <p className="mt-2 text-xs text-gray-500">
             No models configured.{' '}
             <button
               className="text-blue-600 hover:underline"
-              onClick={() => {
-                setEditingModel(null);
-                setShowModelDialog(true);
-              }}
+              onClick={() => setShowModelDialog(true)}
             >
               Add one
             </button>
@@ -298,11 +278,7 @@ export function RightSidebar() {
       {/* Model Config Dialog */}
       <ModelConfigDialog
         isOpen={showModelDialog}
-        onClose={() => {
-          setShowModelDialog(false);
-          setEditingModel(null);
-        }}
-        editingModel={editingModel}
+        onClose={() => setShowModelDialog(false)}
       />
     </div>
   );

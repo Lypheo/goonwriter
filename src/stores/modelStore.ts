@@ -33,6 +33,7 @@ interface ModelState {
   createModel: (config: Omit<ModelConfig, 'id' | 'createdAt' | 'updatedAt'>) => ModelConfig;
   updateModel: (id: string, updates: Partial<Omit<ModelConfig, 'id' | 'createdAt' | 'updatedAt'>>) => void;
   deleteModel: (id: string) => void;
+  duplicateModel: (id: string) => ModelConfig | null;
   
   // Selection
   setSelectedModel: (id: string | null) => void;
@@ -123,6 +124,27 @@ export const useModelStore = create<ModelState>()(
             selectedModelId: newSelectedId,
           };
         });
+      },
+      
+      duplicateModel: (id) => {
+        const model = get().models.find((m) => m.id === id);
+        if (!model) return null;
+        
+        const now = Date.now();
+        const duplicated: ModelConfig = {
+          ...model,
+          id: uuidv4(),
+          name: `${model.name} (copy)`,
+          instructionTemplate: { ...model.instructionTemplate },
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((state) => {
+          const newModels = [...state.models, duplicated];
+          debouncedSaveModels(newModels);
+          return { models: newModels };
+        });
+        return duplicated;
       },
       
       setSelectedModel: (id) => {
