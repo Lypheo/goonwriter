@@ -1,8 +1,8 @@
 # GoonWriter
 
 Basically just a simple LLM frontend, with the main difference to other frontends being that it's built around the text completion endpoint (/completions) rather than chat completions.
-This gives the user full control over every single token sent to the LLM and allows the user to edit any part of the conversation, crucially including the model's reasoning.
-By editing or prefilling the model's reasoning or response, the LLM can be steered accurately and censorship is easily circumvented. (The flipside is, of course, that you to be careful to conform to the model's instruction template.)
+This gives the user full control over every single token sent to the LLM and allows the user to modify any part of the conversation, crucially including the model's reasoning and response.
+By editing or prefilling the model's answer, its censorship is easily circumvented and you can make it generate anything you want. The flipside is, of course, that you to need be careful to conform to the model's chat/instruction template or it will devolve into gibberish. (Naturally, americuck companies don't support text completion anymore, so this is only usable for open weight models.)
 
 This is inspired by [mikupad](https://github.com/lmg-anon/mikupad/) and [KoboldAI lite](https://github.com/LostRuins/lite.koboldai.net), which do basically the same thing, except with a (imo) worse UI for model config and session management.
 
