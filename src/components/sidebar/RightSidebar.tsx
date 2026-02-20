@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore } from '../../stores';
 import { streamCompletion } from '../../services/llmService';
 import { Button, Select, Slider } from '../ui/common';
@@ -64,7 +64,7 @@ export function RightSidebar() {
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
   
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (!selectedModel || !selectedStory || isGenerating) return;
     
     const abortController = startGeneration();
@@ -138,7 +138,24 @@ export function RightSidebar() {
       });
       stopGeneration();
     }
-  };
+  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoCloseThink, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
+  
+  // Ctrl+Enter hotkey for generate/stop
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        if (isGenerating) {
+          stopGeneration();
+        } else {
+          handleGenerate();
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleGenerate, isGenerating, stopGeneration]);
   
   const handleStop = () => {
     stopGeneration();
