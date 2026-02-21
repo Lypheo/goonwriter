@@ -111,6 +111,51 @@ export interface ProviderConfig {
   sort?: 'price' | 'throughput' | 'latency';
 }
 
+// Chat completion types
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatCompletionRequest {
+  model: string;
+  messages: ChatMessage[];
+  stream: true;
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  repetition_penalty?: number;
+  min_p?: number;
+  top_a?: number;
+  max_tokens?: number;
+  provider?: ProviderConfig;
+}
+
+export interface ChatCompletionChunk {
+  id: string;
+  provider: string;
+  model: string;
+  object: string;
+  created: number;
+  choices: ChatCompletionChoice[];
+  usage?: UsageInfo;
+}
+
+export interface ChatCompletionChoice {
+  index: number;
+  delta: {
+    role?: string;
+    content?: string;
+    reasoning?: string | null;
+    reasoning_details?: unknown[];
+  };
+  finish_reason: string | null;
+  native_finish_reason: string | null;
+  logprobs: unknown;
+}
+
 export interface CompletionChunk {
   id: string;
   provider: string;

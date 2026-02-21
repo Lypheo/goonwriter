@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore } from '../../stores';
-import { streamCompletion } from '../../services/llmService';
+import { streamCompletion, streamChatCompletion, parseTextToChatMessages } from '../../services/llmService';
 import { Button, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
@@ -58,7 +58,8 @@ export function RightSidebar() {
   const { selectedStoryId } = useAppStore();
   
   const [showModelDialog, setShowModelDialog] = useState(false);
-  const [autoCloseThink, setAutoCloseThink] = useState(true);
+  const [autoThinkTags, setAutoThinkTags] = useState(true);
+  const [useChatCompletion, setUseChatCompletion] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   
   const selectedModel = getSelectedModel();
@@ -67,88 +68,137 @@ export function RightSidebar() {
   const handleGenerate = useCallback(async () => {
     if (!selectedModel || !selectedStory || isGenerating) return;
     
+    let currentContent = selectedStory.content || '';
+    let currentHtmlContent = selectedStory.htmlContent || '';
+    let prefixText = '';
+    
+    // If using chat completion, auto-insert <<start_ai>> if text ends with <<end_user>>
+    if (useChatCompletion) {
+      const trimmedContent = currentContent.trimEnd();
+      if (trimmedContent.endsWith('<<end_user>>')) {
+        prefixText = '<<start_ai>>';
+        currentContent = currentContent + prefixText;
+        // Update HTML content too
+        if (currentHtmlContent.endsWith('</p>')) {
+          currentHtmlContent = currentHtmlContent.slice(0, -4) + escapeHtml(prefixText) + '</p>';
+        } else {
+          currentHtmlContent = currentHtmlContent + escapeHtml(prefixText);
+        }
+        // Update story immediately
+        updateStory(selectedStory.id, {
+          content: currentContent,
+          htmlContent: currentHtmlContent,
+        });
+      }
+    }
+    
+    // If using chat completion, validate and parse the content
+    let chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] | null = null;
+    if (useChatCompletion) {
+      const parseResult = parseTextToChatMessages(currentContent);
+      if (parseResult.error) {
+        alert(`Cannot use chat format: ${parseResult.error}`);
+        return;
+      }
+      chatMessages = parseResult.messages;
+    }
+    
     const abortController = startGeneration();
     let generatedText = '';
     let wordCount = 0;
     const startTime = Date.now();
     
-    // Get the current HTML content as the base
-    const initialHtml = selectedStory.htmlContent || `<p>${escapeHtml(selectedStory.content || '')}</p>`;
+    // Get the current HTML content as the base (may have been updated with prefix)
+    const initialHtml = currentHtmlContent || `<p>${escapeHtml(currentContent)}</p>`;
+    const baseContent = currentContent;
+    
+    const callbacks = {
+      onChunk: (text: string) => {
+        generatedText += text;
+        wordCount = generatedText.split(/\\s+/).filter((w) => w.length > 0).length;
+        
+        const elapsedSeconds = (Date.now() - startTime) / 1000;
+        const wps = elapsedSeconds > 0 ? wordCount / elapsedSeconds : 0;
+        
+        // Build HTML with AI-authored mark wrapping the generated text
+        // The mark will persist through all text operations
+        const escapedGenerated = escapeHtml(generatedText);
+        const aiMarkedText = `<span data-ai-authored="true" data-model-id="${selectedModel.modelId}" class="ai-authored">${escapedGenerated}</span>`;
+        
+        // Insert at end of last paragraph or create new content
+        let newHtml: string;
+        if (initialHtml.endsWith('</p>')) {
+          // Insert before the closing </p> tag
+          newHtml = initialHtml.slice(0, -4) + aiMarkedText + '</p>';
+        } else {
+          newHtml = initialHtml + aiMarkedText;
+        }
+        
+        // Update story with both plain text and HTML
+        updateStory(selectedStory.id, {
+          content: baseContent + generatedText,
+          htmlContent: newHtml,
+        });
+        
+        setResponseMetadata({ wordsPerSecond: wps });
+      },
+      onMetadata: (chunk: import('../../types').CompletionChunk) => {
+        setResponseMetadata({
+          id: chunk.id,
+          provider: chunk.provider,
+          model: chunk.model,
+          created: chunk.created,
+          finishReason: chunk.choices?.[0]?.finish_reason || null,
+          nativeFinishReason: chunk.choices?.[0]?.native_finish_reason || null,
+          usage: chunk.usage || null,
+        });
+        
+        // Accumulate cost and tokens when usage info is available
+        if (chunk.usage) {
+          const currentCost = selectedStory.totalCost || 0;
+          const currentTokens = selectedStory.totalTokens || 0;
+          updateStory(selectedStory.id, {
+            totalCost: currentCost + (chunk.usage.cost || 0),
+            totalTokens: chunk.usage.total_tokens ?? currentTokens,
+          });
+        }
+      },
+      onError: (error: string) => {
+        setResponseMetadata({ error });
+        stopGeneration();
+      },
+      onComplete: () => {
+        stopGeneration();
+      },
+    };
     
     try {
-      await streamCompletion(
-        selectedModel,
-        selectedStory.content,
-        samplingParams,
-        {
-          onChunk: (text) => {
-            generatedText += text;
-            wordCount = generatedText.split(/\\s+/).filter((w) => w.length > 0).length;
-            
-            const elapsedSeconds = (Date.now() - startTime) / 1000;
-            const wps = elapsedSeconds > 0 ? wordCount / elapsedSeconds : 0;
-            
-            // Build HTML with AI-authored mark wrapping the generated text
-            // The mark will persist through all text operations
-            const escapedGenerated = escapeHtml(generatedText);
-            const aiMarkedText = `<span data-ai-authored="true" data-model-id="${selectedModel.modelId}" class="ai-authored">${escapedGenerated}</span>`;
-            
-            // Insert at end of last paragraph or create new content
-            let newHtml: string;
-            if (initialHtml.endsWith('</p>')) {
-              // Insert before the closing </p> tag
-              newHtml = initialHtml.slice(0, -4) + aiMarkedText + '</p>';
-            } else {
-              newHtml = initialHtml + aiMarkedText;
-            }
-            
-            // Update story with both plain text and HTML
-            updateStory(selectedStory.id, {
-              content: (selectedStory.content || '') + generatedText,
-              htmlContent: newHtml,
-            });
-            
-            setResponseMetadata({ wordsPerSecond: wps });
-          },
-          onMetadata: (chunk) => {
-            setResponseMetadata({
-              id: chunk.id,
-              provider: chunk.provider,
-              model: chunk.model,
-              created: chunk.created,
-              finishReason: chunk.choices?.[0]?.finish_reason || null,
-              nativeFinishReason: chunk.choices?.[0]?.native_finish_reason || null,
-              usage: chunk.usage || null,
-            });
-            
-            // Accumulate cost and tokens when usage info is available
-            if (chunk.usage) {
-              const currentCost = selectedStory.totalCost || 0;
-              const currentTokens = selectedStory.totalTokens || 0;
-              updateStory(selectedStory.id, {
-                totalCost: currentCost + (chunk.usage.cost || 0),
-                totalTokens: chunk.usage.total_tokens ?? currentTokens,
-              });
-            }
-          },
-          onError: (error) => {
-            setResponseMetadata({ error });
-            stopGeneration();
-          },
-          onComplete: () => {
-            stopGeneration();
-          },
-        },
-        abortController.signal,
-        { autoCloseThink }
-      );
+      if (useChatCompletion && chatMessages) {
+        await streamChatCompletion(
+          selectedModel,
+          chatMessages,
+          samplingParams,
+          callbacks,
+          abortController.signal,
+          { autoThinkTags }
+        );
+      } else {
+        await streamCompletion(
+          selectedModel,
+          currentContent,
+          samplingParams,
+          callbacks,
+          abortController.signal,
+          { autoThinkTags }
+        );
+      }
     } catch (error) {
       setResponseMetadata({
         error: error instanceof Error ? error.message : 'Unknown error',
       });
       stopGeneration();
     }
-  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoCloseThink, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
+  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, useChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
   
   // Ctrl+Enter hotkey for generate/stop
   useEffect(() => {
@@ -255,15 +305,27 @@ export function RightSidebar() {
       <div className="p-3 border-b border-gray-200">
         <label 
           className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
-          title="When enabled, automatically inserts a closing </think> tag when the model transitions from reasoning to text output. Often needed because most providers don't transmit </think> tokens."
+          title="Automatically insert opening <think> when reasoning starts and closing </think> when reasoning ends. Needed because most providers don't transmit think tokens properly."
         >
           <input
             type="checkbox"
-            checked={autoCloseThink}
-            onChange={(e) => setAutoCloseThink(e.target.checked)}
+            checked={autoThinkTags}
+            onChange={(e) => setAutoThinkTags(e.target.checked)}
             className="rounded border-gray-300"
           />
-          <span>Auto-close think tags</span>
+          <span>Auto think tags</span>
+        </label>
+        <label 
+          className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
+          title="Use /chat/completions endpoint instead of /completions. Requires properly formatted chat structure with alternating user/assistant blocks."
+        >
+          <input
+            type="checkbox"
+            checked={useChatCompletion}
+            onChange={(e) => setUseChatCompletion(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <span>Use chat completions</span>
         </label>
         {!isGenerating ? (
           <Button
