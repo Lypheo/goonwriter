@@ -5,6 +5,7 @@ import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import Placeholder from '@tiptap/extension-placeholder';
 import HardBreak from '@tiptap/extension-hard-break';
+import { UndoRedo } from '@tiptap/extensions';
 import { useDataStore, useAppStore, useGenerationStore, useModelStore } from '../../stores';
 import { StoryDecorations, AiAuthored } from './extensions';
 
@@ -68,6 +69,7 @@ export function StoryEditor() {
       Paragraph,
       Text,
       HardBreak,
+      UndoRedo,
       AiAuthored, // Mark for tracking AI-authored text
       Placeholder.configure({
         placeholder: 'Start writing your story...',
@@ -189,7 +191,32 @@ export function StoryEditor() {
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
       {/* Story Title */}
       <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-800">{selectedStory.name}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold text-gray-800">{selectedStory.name}</h1>
+          {/* Undo/Redo buttons */}
+          <div className="flex items-center gap-1 ml-2">
+            <button
+              onClick={() => editor?.chain().focus().undo().run()}
+              disabled={!editor?.can().undo()}
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Undo (Ctrl+Z)"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" />
+              </svg>
+            </button>
+            <button
+              onClick={() => editor?.chain().focus().redo().run()}
+              disabled={!editor?.can().redo()}
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Redo (Ctrl+Y)"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
+              </svg>
+            </button>
+          </div>
+        </div>
         {isGenerating && (
           <span className="text-sm text-blue-600 flex items-center gap-2">
             <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
