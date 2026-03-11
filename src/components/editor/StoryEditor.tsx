@@ -6,8 +6,11 @@ import Text from '@tiptap/extension-text';
 import Placeholder from '@tiptap/extension-placeholder';
 import HardBreak from '@tiptap/extension-hard-break';
 import { UndoRedo } from '@tiptap/extensions';
-import { useDataStore, useAppStore, useGenerationStore, useModelStore } from '../../stores';
+import { useDataStore, useAppStore, useGenerationStore, useModelStore, useCompletionModelStore } from '../../stores';
 import { StoryDecorations, AiAuthored } from './extensions';
+import { CompletionPopup, type CompletionItem } from './CompletionPopup';
+import { streamSentenceCompletion } from '../../services/completionService';
+import type { CompletionModelConfig } from '../../types';
 
 // Escape HTML entities for special tokens that should be visible as-is
 function escapeSpecialTokens(html: string): string {
@@ -41,6 +44,7 @@ export function StoryEditor() {
   const { selectedStoryId } = useAppStore();
   const { isGenerating } = useGenerationStore();
   const { models } = useModelStore();
+  const { getEnabledModels, accumulateCost } = useCompletionModelStore();
   
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,6 +53,20 @@ export function StoryEditor() {
   
   // Track cursor position for authorship display
   const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai'; modelId?: string }>({ author: 'user' });
+  
+  // Sentence completion state
+  const [completionItems, setCompletionItems] = useState<CompletionItem[]>([]);
+  const [completionVisible, setCompletionVisible] = useState(false);
+  const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0);
+  const [completionPosition, setCompletionPosition] = useState({ top: 0, left: 0 });
+  const completionAbortControllers = useRef<Map<string, AbortController>>(new Map());
+  const completionActiveRef = useRef(false);
+  const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+  
+  // Refs to avoid re-creating the keyboard handler on every streaming chunk
+  const completionItemsRef = useRef<CompletionItem[]>([]);
+  const completionSelectedIndexRef = useRef(0);
+  const acceptCompletionRef = useRef<(index: number) => void>(() => {});
   
   // Get the HTML content, migrating from plain text if needed
   const getEditorContent = useCallback(() => {
@@ -63,6 +81,98 @@ export function StoryEditor() {
     return textToHtml(selectedStory.content || '');
   }, [selectedStory]);
   
+  // Cancel all active completion streams
+  const cancelCompletions = useCallback(() => {
+    completionAbortControllers.current.forEach((c) => c.abort());
+    completionAbortControllers.current.clear();
+    completionActiveRef.current = false;
+    setCompletionVisible(false);
+    setCompletionItems([]);
+    setCompletionSelectedIndex(0);
+  }, []);
+  
+  // Accept a completion and insert it at cursor
+  const acceptCompletion = useCallback(
+    (index: number) => {
+      const item = completionItemsRef.current[index];
+      if (!item || !item.text || !editorRef.current) return;
+      
+      cancelCompletions();
+      
+      // Insert the text at current cursor position
+      editorRef.current.chain().focus().insertContent(item.text).run();
+    },
+    [cancelCompletions]
+  );
+
+  // Keep ref in sync for keyboard handler
+  acceptCompletionRef.current = acceptCompletion;
+
+  // Keep refs in sync with state
+  completionItemsRef.current = completionItems;
+  completionSelectedIndexRef.current = completionSelectedIndex;
+
+  // Start streaming completions from all enabled models
+  const startCompletionStreams = useCallback(
+    (enabledModels: CompletionModelConfig[], context: string, pos: { top: number; left: number }) => {
+      cancelCompletions();
+      completionActiveRef.current = true;
+      
+      setCompletionPosition(pos);
+      setCompletionSelectedIndex(0);
+      
+      const initialItems: CompletionItem[] = enabledModels.map((m) => ({
+        modelId: m.id,
+        modelName: m.name,
+        text: '',
+        isLoading: true,
+      }));
+      setCompletionItems(initialItems);
+      setCompletionVisible(true);
+      
+      enabledModels.forEach((model) => {
+        const controller = new AbortController();
+        completionAbortControllers.current.set(model.id, controller);
+        
+        streamSentenceCompletion(model, context, {
+          onChunk: (fullText) => {
+            if (!completionActiveRef.current) return;
+            setCompletionItems((prev) =>
+              prev.map((item) =>
+                item.modelId === model.id ? { ...item, text: fullText } : item
+              )
+            );
+          },
+          onUsage: (usage) => {
+            accumulateCost(model.id, usage.cost || 0, usage.total_tokens || 0);
+          },
+          onError: (error) => {
+            if (!completionActiveRef.current) return;
+            setCompletionItems((prev) =>
+              prev.map((item) =>
+                item.modelId === model.id
+                  ? { ...item, isLoading: false, error }
+                  : item
+              )
+            );
+          },
+          onComplete: (finalText) => {
+            if (!completionActiveRef.current) return;
+            setCompletionItems((prev) =>
+              prev.map((item) =>
+                item.modelId === model.id
+                  ? { ...item, text: finalText, isLoading: false }
+                  : item
+              )
+            );
+            completionAbortControllers.current.delete(model.id);
+          },
+        }, controller.signal);
+      });
+    },
+    [cancelCompletions, accumulateCost]
+  );
+
   const editor = useEditor({
     extensions: [
       Document,
@@ -79,6 +189,10 @@ export function StoryEditor() {
     content: getEditorContent(),
     editable: !isGenerating,
     onSelectionUpdate: ({ editor }) => {
+      // Dismiss completion popup when cursor moves
+      if (completionActiveRef.current) {
+        cancelCompletions();
+      }
       // Check if the cursor is in AI-authored text by checking marks at position
       const { from } = editor.state.selection;
       const $pos = editor.state.doc.resolve(from);
@@ -122,6 +236,9 @@ export function StoryEditor() {
     },
   });
   
+  // Keep editor ref in sync
+  editorRef.current = editor;
+  
   // Update editor content when story changes
   useEffect(() => {
     if (editor && selectedStory) {
@@ -151,8 +268,102 @@ export function StoryEditor() {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
+      cancelCompletions();
     };
-  }, []);
+  }, [cancelCompletions]);
+  
+  // Cancel completions when story changes
+  useEffect(() => {
+    cancelCompletions();
+  }, [selectedStoryId, cancelCompletions]);
+  
+  // Keyboard handler for completion popup + Tab trigger
+  // Registered on editor.view.dom in CAPTURE phase so it fires BEFORE
+  // ProseMirror's own handler. stopImmediatePropagation prevents PM from
+  // ever seeing consumed keys (PM's captureKeyDown swallows Escape/arrows).
+  useEffect(() => {
+    if (!editor) return;
+    
+    const handleEditorKeyDown = (e: KeyboardEvent) => {
+      // When completion popup is active, Enter accepts the selected completion
+      if (completionActiveRef.current) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          acceptCompletionRef.current(completionSelectedIndexRef.current);
+          return;
+        }
+        // Tab cycles through completions instead of triggering new ones
+        if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setCompletionSelectedIndex((prev) =>
+            prev < completionItemsRef.current.length - 1 ? prev + 1 : 0
+          );
+          return;
+        }
+        if (e.key === 'Tab' && e.shiftKey) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setCompletionSelectedIndex((prev) =>
+            prev > 0 ? prev - 1 : completionItemsRef.current.length - 1
+          );
+          return;
+        }
+      }
+      
+      // Tab triggers completion (only when popup is not active)
+      if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (isGenerating) return;
+      
+      const enabledModels = getEnabledModels();
+      if (enabledModels.length === 0) return;
+      
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      
+      // Get text before cursor using ProseMirror's textBetween for accurate mapping
+      const { from } = editor.state.selection;
+      const textBeforeCursor = editor.state.doc.textBetween(0, from, '\n\n');
+      
+      // Get context (last N chars)
+      const defaultContextLen = 1000;
+      const contextLength = enabledModels[0]?.contextLength || defaultContextLen;
+      const context = textBeforeCursor.slice(-contextLength);
+      
+      if (!context.trim()) return; // No content to complete from
+      
+      // Get cursor screen position for popup placement  
+      const view = editor.view;
+      const coords = view.coordsAtPos(from);
+      const popupPos = {
+        top: coords.bottom + 4,
+        left: coords.left,
+      };
+      
+      // Start streaming completions
+      startCompletionStreams(enabledModels, context, popupPos);
+    };
+
+    // Click outside popup dismisses it
+    const handleMouseDown = (e: MouseEvent) => {
+      if (!completionActiveRef.current) return;
+      const popup = document.querySelector('.completion-popup');
+      if (popup && !popup.contains(e.target as Node)) {
+        cancelCompletions();
+      }
+    };
+    
+    // CAPTURE phase on editor DOM — fires before ProseMirror's bubble-phase handler
+    const editorDom = editor.view.dom;
+    editorDom.addEventListener('keydown', handleEditorKeyDown, true);
+    document.addEventListener('mousedown', handleMouseDown);
+    
+    return () => {
+      editorDom.removeEventListener('keydown', handleEditorKeyDown, true);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [editor, isGenerating, getEnabledModels, startCompletionStreams, cancelCompletions]);
   
   if (!selectedStory) {
     return (
@@ -186,6 +397,11 @@ export function StoryEditor() {
     const model = models.find(m => m.modelId === modelId);
     return model?.name || modelId;
   };
+  
+  // Compute total completion cost across all models
+  const completionModels = useCompletionModelStore((s) => s.models);
+  const totalCompletionCost = completionModels.reduce((sum, m) => sum + m.totalCost, 0);
+  const totalCompletionTokens = completionModels.reduce((sum, m) => sum + m.totalTokens, 0);
   
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
@@ -250,6 +466,16 @@ export function StoryEditor() {
         </div>
       </div>
       
+      {/* Sentence Completion Popup */}
+      <CompletionPopup
+        items={completionItems}
+        position={completionPosition}
+        selectedIndex={completionSelectedIndex}
+        onSelect={acceptCompletion}
+        onCancel={cancelCompletions}
+        visible={completionVisible}
+      />
+      
       {/* Authorship Footer */}
       <div className="px-6 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-600 flex items-center justify-between">
         <div>
@@ -265,18 +491,30 @@ export function StoryEditor() {
             </span>
           )}
         </div>
-        {(selectedStory.totalCost > 0 || selectedStory.totalTokens > 0) && (
-          <div className="text-gray-400 font-mono" title="Accumulated generation cost and tokens for this story">
-            {selectedStory.totalTokens.toLocaleString()} tokens | 
-            {selectedStory.totalCost > 0 && (
-              <span className="ml-2">
-                {selectedStory.totalCost < 0.1 
-                  ? `${(selectedStory.totalCost * 100).toFixed(3)}¢`
-                  : `$${selectedStory.totalCost.toFixed(3)}`}
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {totalCompletionCost > 0 && (
+            <span className="text-gray-400 font-mono" title="Sentence completion cost (all models)">
+              ✎{' '}
+              {totalCompletionCost < 0.1
+                ? `${(totalCompletionCost * 100).toFixed(3)}¢`
+                : `$${totalCompletionCost.toFixed(3)}`}
+              {' '}({totalCompletionTokens.toLocaleString()} tok)
+            </span>
+          )}
+          {" | "}
+          {(selectedStory.totalCost > 0 || selectedStory.totalTokens > 0) && (
+            <div className="text-gray-400 font-mono" title="Accumulated generation cost and tokens for this story">
+              {selectedStory.totalTokens.toLocaleString()} tokens | 
+              {selectedStory.totalCost > 0 && (
+                <span className="ml-2">
+                  {selectedStory.totalCost < 0.1 
+                    ? `${(selectedStory.totalCost * 100).toFixed(3)}¢`
+                    : `$${selectedStory.totalCost.toFixed(3)}`}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

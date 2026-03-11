@@ -224,3 +224,26 @@ export const SPECIAL_TOKENS = {
 } as const;
 
 export type SectionType = 'system' | 'user' | 'ai' | 'default';
+
+// Sentence completion model configuration
+export interface CompletionModelConfig {
+  id: string;
+  name: string;
+  baseUrl: string;
+  token: string;
+  modelId: string;
+  enabled: boolean; // Whether this model is active for sentence completion
+  mode: 'instruction' | 'raw'; // instruction = chat completion, raw = text completion
+  systemMessage: string; // System message for instruction mode
+  prompt: string; // User prompt template (prepended to context) for instruction mode
+  contextLength: number; // Number of chars of context to send (default 1000)
+  totalCost: number; // Accumulated completion cost in USD
+  totalTokens: number; // Accumulated token usage
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Sentence completion settings (persisted)
+export interface CompletionSettings {
+  models: CompletionModelConfig[];
+}

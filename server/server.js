@@ -126,6 +126,8 @@ function getDefaultData(type) {
       return [];
     case 'models':
       return [];
+    case 'completionModels':
+      return { models: [] };
     case 'settings':
       return {
         selectedModelId: null,

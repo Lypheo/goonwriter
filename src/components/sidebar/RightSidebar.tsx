@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useModelStore, useGenerationStore, useDataStore, useAppStore } from '../../stores';
+import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { streamCompletion, streamChatCompletion, parseTextToChatMessages } from '../../services/llmService';
 import { Button, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
+import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
 import { ResponseMetadata } from './ResponseMetadata';
 
@@ -58,9 +59,14 @@ export function RightSidebar() {
   const { selectedStoryId } = useAppStore();
   
   const [showModelDialog, setShowModelDialog] = useState(false);
+  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  
+  const completionModels = useCompletionModelStore((s) => s.models);
+  const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
+  const enabledCompletionCount = completionModels.filter((m) => m.enabled).length;
   
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
@@ -359,6 +365,58 @@ export function RightSidebar() {
         <SamplingParams />
       </div>
       
+      {/* Sentence Completion */}
+      <div className="p-3 border-b border-gray-200">
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-sm font-medium text-gray-700">Sentence Completion</label>
+          <button
+            onClick={() => setShowCompletionDialog(true)}
+            className="p-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
+            title="Configure completion models"
+          >
+            <SettingsIcon />
+          </button>
+        </div>
+        {completionModels.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            No models configured.{' '}
+            <button
+              className="text-blue-600 hover:underline"
+              onClick={() => setShowCompletionDialog(true)}
+            >
+              Add one
+            </button>
+          </p>
+        ) : (
+          <>
+            <div className="max-h-32 overflow-y-auto space-y-0.5">
+              {completionModels.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => updateCompletionModel(m.id, { enabled: !m.enabled })}
+                  className={`w-full flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors text-left ${
+                    m.enabled
+                      ? 'bg-blue-50 text-blue-800 hover:bg-blue-100'
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                  title={`Click to ${m.enabled ? 'disable' : 'enable'} — ${m.modelId || 'no model ID'}`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      m.enabled ? 'bg-green-400' : 'bg-gray-300'
+                    }`}
+                  />
+                  <span className="truncate">{m.name}</span>
+                </button>
+              ))}
+            </div>
+            {enabledCompletionCount > 0 && (
+              <p className="text-[10px] text-gray-400 mt-1">Press Tab in editor to complete</p>
+            )}
+          </>
+        )}
+      </div>
+      
       {/* Response Metadata */}
       <div className="flex-1 overflow-y-auto">
         <ResponseMetadata />
@@ -368,6 +426,12 @@ export function RightSidebar() {
       <ModelConfigDialog
         isOpen={showModelDialog}
         onClose={() => setShowModelDialog(false)}
+      />
+      
+      {/* Completion Model Config Dialog */}
+      <CompletionModelConfigDialog
+        isOpen={showCompletionDialog}
+        onClose={() => setShowCompletionDialog(false)}
       />
     </div>
   );
