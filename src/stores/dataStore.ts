@@ -56,7 +56,7 @@ const debouncedSaveStories = (stories: Story[]) => {
   saveStoriesTimeout = setTimeout(() => saveData('stories', stories), 500);
 };
 
-const debouncedSaveAppState = (appState: { selectedStoryId: string | null }) => {
+const debouncedSaveAppState = (appState: { selectedStoryId: string | null; userCommandTemplate?: string }) => {
   if (saveAppStateTimeout) clearTimeout(saveAppStateTimeout);
   saveAppStateTimeout = setTimeout(() => saveData('appState', appState), 500);
 };
@@ -264,25 +264,28 @@ interface AppState {
   selectedGroupId: string | null;
   selectedCollectionId: string | null;
   selectedStoryId: string | null;
+  userCommandTemplate: string;
   isAppStateInitialized: boolean;
   
   initializeAppState: () => Promise<void>;
   setSelectedGroup: (id: string | null) => void;
   setSelectedCollection: (id: string | null) => void;
   setSelectedStory: (id: string | null) => void;
+  setUserCommandTemplate: (template: string) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => ({
   selectedGroupId: null,
   selectedCollectionId: null,
   selectedStoryId: null,
+  userCommandTemplate: '<<end_ai>><<start_user>>{cursor}<<end_user>><<start_ai>><think>\n...\n</think>\n',
   isAppStateInitialized: false,
   
   initializeAppState: async () => {
     if (get().isAppStateInitialized) return;
     
     try {
-      const appState = await fetchData<{ selectedStoryId: string | null }>('appState');
+      const appState = await fetchData<{ selectedStoryId: string | null; userCommandTemplate?: string }>('appState');
       if (appState?.selectedStoryId) {
         // Verify the story still exists
         const stories = useDataStore.getState().stories;
@@ -290,6 +293,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
         if (storyExists) {
           set({ selectedStoryId: appState.selectedStoryId });
         }
+      }
+      if (appState?.userCommandTemplate) {
+        set({ userCommandTemplate: appState.userCommandTemplate });
       }
     } catch (error) {
       console.error('Failed to load app state:', error);
@@ -301,6 +307,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setSelectedCollection: (id) => set({ selectedCollectionId: id }),
   setSelectedStory: (id) => {
     set({ selectedStoryId: id });
-    debouncedSaveAppState({ selectedStoryId: id });
+    debouncedSaveAppState({ selectedStoryId: id, userCommandTemplate: get().userCommandTemplate });
+  },
+  setUserCommandTemplate: (template) => {
+    set({ userCommandTemplate: template });
+    debouncedSaveAppState({ selectedStoryId: get().selectedStoryId, userCommandTemplate: template });
   },
 }));

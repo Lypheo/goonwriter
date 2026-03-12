@@ -42,6 +42,7 @@ function textToHtml(text: string): string {
 export function StoryEditor() {
   const { stories, updateStory } = useDataStore();
   const { selectedStoryId } = useAppStore();
+  const { userCommandTemplate, setUserCommandTemplate } = useAppStore();
   const { isGenerating } = useGenerationStore();
   const { models } = useModelStore();
   const { getEnabledModels, accumulateCost } = useCompletionModelStore();
@@ -50,6 +51,10 @@ export function StoryEditor() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedHtmlRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
+  
+  // User command template editor state
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState('');
   
   // Track cursor position for authorship display
   const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai'; modelId?: string }>({ author: 'user' });
@@ -431,6 +436,38 @@ export function StoryEditor() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
               </svg>
             </button>
+            <button
+              onClick={() => {
+                if (!editor) return;
+                const template = userCommandTemplate;
+                const cursorMarker = '{cursor}';
+
+                // Replace literal \n with actual newlines
+                const resolved = template.replace(/\\n/g, '\n');
+                const resolvedCursorIdx = resolved.indexOf(cursorMarker) >= 0 ? resolved.indexOf(cursorMarker) : -1;
+                if (resolvedCursorIdx >= 0) {
+                  const before = resolved.slice(0, resolvedCursorIdx);
+                  const after = resolved.slice(resolvedCursorIdx + cursorMarker.length);
+                  editor.chain().focus().insertContent(before + after).run();
+                  const { to } = editor.state.selection;
+                  const newPos = to - after.length;
+                  editor.commands.setTextSelection(newPos);
+                } else {
+                  editor.chain().focus().insertContent(resolved).run();
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setTemplateDraft(userCommandTemplate);
+                setShowTemplateEditor(true);
+              }}
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title="Insert user command (right-click to configure)"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </button>
           </div>
         </div>
         {isGenerating && (
@@ -516,6 +553,52 @@ export function StoryEditor() {
           )}
         </div>
       </div>
+      
+      {/* User Command Template Editor */}
+      {showTemplateEditor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowTemplateEditor(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-[480px] p-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">User Command Template</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Use <code className="bg-gray-100 px-1 rounded">{'{cursor}'}</code> to mark where the cursor should be placed.
+              Use <code className="bg-gray-100 px-1 rounded">\n</code> for newlines.
+            </p>
+            <textarea
+              value={templateDraft}
+              onChange={(e) => setTemplateDraft(e.target.value)}
+              className="w-full h-32 px-3 py-2 text-sm font-mono border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              spellCheck={false}
+            />
+            <div className="flex justify-between items-center mt-3">
+              <button
+                onClick={() => {
+                  setTemplateDraft('<<end_ai>><<start_user>>{cursor}<<end_user>><<start_ai>><think>\\n...\\n</think>\\n');
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Reset to default
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowTemplateEditor(false)}
+                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setUserCommandTemplate(templateDraft);
+                    setShowTemplateEditor(false);
+                  }}
+                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
