@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useModelStore, defaultInstructionTemplate } from '../../stores';
 import type { InstructionTemplate } from '../../types';
 import { Input, Textarea, Select, Modal } from '../ui/common';
@@ -34,12 +34,15 @@ const EditIcon = () => (
 );
 
 export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
-  const { models, createModel, updateModel, deleteModel, duplicateModel } = useModelStore();
+  const { models, createModel, updateModel, deleteModel, duplicateModel, selectedModelId } = useModelStore();
   
   // Currently selected model in the list (for editing)
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const selectedItemRef = useRef<HTMLDivElement | null>(null);
+  const lastLoadedIdRef = useRef<string | null>(null);
+  const didInitSelectionRef = useRef(false);
   
   // Form state
   const [formData, setFormData] = useState<{
@@ -63,27 +66,26 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   
   const selectedModel = models.find(m => m.id === selectedId);
   
-  // Select first model when dialog opens, or when models change
+  // Select the currently selected model when dialog opens (once per open)
   useEffect(() => {
-    if (isOpen && models.length > 0 && !selectedId) {
+    if (!isOpen) {
+      didInitSelectionRef.current = false;
+      return;
+    }
+    if (didInitSelectionRef.current) return;
+
+    if (selectedModelId && models.some((m) => m.id === selectedModelId)) {
+      setSelectedId(selectedModelId);
+    } else if (models.length > 0) {
       setSelectedId(models[0].id);
     }
-  }, [isOpen, models, selectedId]);
+    didInitSelectionRef.current = true;
+  }, [isOpen, models, selectedModelId]);
   
-  // Load form data when selected model changes
+  // Load form data only when selected model changes
   useEffect(() => {
-    if (selectedModel) {
-      setFormData({
-        name: selectedModel.name,
-        baseUrl: selectedModel.baseUrl,
-        token: selectedModel.token,
-        modelId: selectedModel.modelId,
-        instructionTemplate: { ...selectedModel.instructionTemplate },
-      });
-      setAllowedProvidersText(selectedModel.instructionTemplate.allowedProviders.join(', '));
-      setBannedProvidersText(selectedModel.instructionTemplate.bannedProviders.join(', '));
-      setAllowedQuantizationsText(selectedModel.instructionTemplate.allowedQuantizations.join(', '));
-    } else {
+    if (!selectedId) {
+      lastLoadedIdRef.current = null;
       setFormData({
         name: '',
         baseUrl: '',
@@ -94,8 +96,35 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       setAllowedProvidersText('');
       setBannedProvidersText('');
       setAllowedQuantizationsText('');
+      return;
     }
-  }, [selectedModel]);
+
+    if (lastLoadedIdRef.current === selectedId) return;
+    const model = models.find((m) => m.id === selectedId);
+    if (!model) return;
+
+    lastLoadedIdRef.current = selectedId;
+    setFormData({
+      name: model.name,
+      baseUrl: model.baseUrl,
+      token: model.token,
+      modelId: model.modelId,
+      instructionTemplate: { ...model.instructionTemplate },
+    });
+    setAllowedProvidersText(model.instructionTemplate.allowedProviders.join(', '));
+    setBannedProvidersText(model.instructionTemplate.bannedProviders.join(', '));
+    setAllowedQuantizationsText(model.instructionTemplate.allowedQuantizations.join(', '));
+  }, [selectedId, models]);
+
+  // Focus selected model when dialog opens
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!selectedItemRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      selectedItemRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, selectedId, models.length]);
   
   // Reset state when dialog closes
   useEffect(() => {
@@ -205,6 +234,8 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 {models.map((model) => (
                   <li key={model.id}>
                     <div
+                      ref={selectedId === model.id ? selectedItemRef : null}
+                      tabIndex={selectedId === model.id ? 0 : -1}
                       className={`group flex items-center px-2 py-1.5 cursor-pointer ${
                         selectedId === model.id
                           ? 'bg-blue-100 text-blue-900'
