@@ -56,6 +56,11 @@ export function StoryEditor() {
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [templateDraft, setTemplateDraft] = useState('');
   
+  // Chapter summaries editor state
+  const [showSummariesEditor, setShowSummariesEditor] = useState(false);
+  const [summariesDraft, setSummariesDraft] = useState('');
+  const summariesMirrorRef = useRef<HTMLDivElement>(null);
+  
   // Track cursor position for authorship display
   const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai'; modelId?: string }>({ author: 'user' });
   
@@ -436,14 +441,52 @@ export function StoryEditor() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
               </svg>
             </button>
+            <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
+              <input 
+                type="number"
+                min="1"
+                className="w-12 h-6 px-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                value={selectedStory.chapterNumber ?? 1}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) {
+                    updateStory(selectedStory.id, { chapterNumber: val });
+                  }
+                }}
+                title="Chapter number (n)"
+              />
+              <button
+                onClick={() => {
+                  setSummariesDraft(selectedStory.chapterSummaries ?? '');
+                  setShowSummariesEditor(true);
+                }}
+                className="p-1 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                title="Edit Chapter Summaries"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            </div>
             <button
               onClick={() => {
                 if (!editor) return;
                 const template = userCommandTemplate;
                 const cursorMarker = '{cursor}';
+                const chapterNum = selectedStory.chapterNumber ?? 1;
+                const summaries = (selectedStory.chapterSummaries ?? '').split(/\r?\n/);
+
+                let resolved = template.replace(/\{\{\s*n\s*\}\}/g, chapterNum.toString());
+
+                resolved = resolved.replace(/\{\{\s*(-?\d+)\s*\}\}/g, (_, match) => {
+                  const targetNum = chapterNum + parseInt(match, 10);
+                  const idx = targetNum - 1; // 1-based index to 0-based array index
+                  return (idx >= 0 && idx < summaries.length) ? summaries[idx] : `[Missing Summary ${targetNum}]`;
+                });
 
                 // Replace literal \n with actual newlines
-                const resolved = template.replace(/\\n/g, '\n');
+                resolved = resolved.replace(/\\n/g, '\n');
+                
                 const resolvedCursorIdx = resolved.indexOf(cursorMarker) >= 0 ? resolved.indexOf(cursorMarker) : -1;
                 if (resolvedCursorIdx >= 0) {
                   const before = resolved.slice(0, resolvedCursorIdx);
@@ -455,17 +498,28 @@ export function StoryEditor() {
                 } else {
                   editor.chain().focus().insertContent(resolved).run();
                 }
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setTemplateDraft(userCommandTemplate);
-                setShowTemplateEditor(true);
+
+                // Increment chapter number automatically
+                updateStory(selectedStory.id, { chapterNumber: chapterNum + 1 });
               }}
               className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Insert user command (right-click to configure)"
+              title="Insert user command"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                setTemplateDraft(userCommandTemplate);
+                setShowTemplateEditor(true);
+              }}
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Configure user command template"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
           </div>
@@ -595,6 +649,72 @@ export function StoryEditor() {
                   Save
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chapter Summaries Editor */}
+      {showSummariesEditor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSummariesEditor(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-[800px] p-4 flex flex-col h-[70vh] max-h-[800px]" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Chapter Summaries</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Enter one summary per line. The first line is Chapter 1, the second is Chapter 2, etc. Use <code className="bg-gray-100 px-1 rounded">{'{{n}}'}</code> in the User Command Template to inject summaries relative to the current chapter.
+            </p>
+            <div className="flex-1 min-h-0 relative border border-gray-300 rounded-md group focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500 bg-white shadow-sm overflow-hidden">
+              {/* Left Gutter Background */}
+              <div aria-hidden="true" className="absolute top-0 left-0 bottom-0 w-12 bg-gray-50 border-r border-gray-200 pointer-events-none z-0" />
+              
+              {/* Invisible Mirror for sync layout */}
+              <div 
+                ref={summariesMirrorRef}
+                aria-hidden="true" 
+                className="absolute inset-0 z-10 overflow-y-auto pointer-events-none text-transparent font-mono text-sm leading-6 py-3 whitespace-pre-wrap break-words pr-3"
+                style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+              >
+                <div className="flex flex-col w-full">
+                  {(summariesDraft || '').split('\n').map((line, i) => (
+                    <div key={i} className="flex min-w-0">
+                      <div className="w-12 flex-shrink-0 text-right pr-3 text-gray-400 select-none">
+                        {i + 1}
+                      </div>
+                      <div className="flex-1 min-w-0 break-words pl-3">
+                        {line || '\u200B'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <textarea
+                value={summariesDraft}
+                onChange={(e) => setSummariesDraft(e.target.value)}
+                className="relative z-20 w-full h-full py-3 pl-[3.75rem] pr-3 text-sm font-mono focus:outline-none resize-none leading-6 bg-transparent text-gray-700 whitespace-pre-wrap break-words"
+                spellCheck={false}
+                onScroll={(e) => {
+                  if (summariesMirrorRef.current) {
+                    summariesMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+                  }
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowSummariesEditor(false)}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  updateStory(selectedStory.id, { chapterSummaries: summariesDraft });
+                  setShowSummariesEditor(false);
+                }}
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>

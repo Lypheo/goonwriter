@@ -119,43 +119,49 @@ function findSpecialTokensWithPositions(
     { token: SPECIAL_TOKENS.END_THINK, type: 'think-end', isEndToken: false },
   ];
   
-  // Build a map of text positions to document positions
+  // Get full text and build chunk map for O(log N) position lookups
+  let fullText = '';
   let textPos = 0;
-  const posMap: { textPos: number; docPos: number }[] = [];
+  const chunks: { textPos: number; docPos: number; length: number }[] = [];
   
   doc.descendants((node, pos) => {
     if (node.isText && node.text) {
-      for (let i = 0; i < node.text.length; i++) {
-        posMap.push({ textPos: textPos + i, docPos: pos + i });
-      }
+      chunks.push({ textPos, docPos: pos, length: node.text.length });
+      fullText += node.text;
       textPos += node.text.length;
-    } else if (node.isBlock && pos > 0) {
-      // Account for newlines between blocks
-      posMap.push({ textPos, docPos: pos });
     }
     return true;
   });
   
-  // Get full text
-  let fullText = '';
-  doc.descendants((node) => {
-    if (node.isText) {
-      fullText += node.text;
+  const getDocPos = (targetTextPos: number): number => {
+    let left = 0;
+    let right = chunks.length - 1;
+    while (left <= right) {
+      const mid = (left + right) >> 1;
+      const chunk = chunks[mid];
+      if (targetTextPos >= chunk.textPos && targetTextPos < chunk.textPos + chunk.length) {
+        return chunk.docPos + (targetTextPos - chunk.textPos);
+      }
+      if (targetTextPos < chunk.textPos) {
+        right = mid - 1;
+      } else {
+        left = mid + 1;
+      }
     }
-    return true;
-  });
+    return -1;
+  };
   
   // Find tokens in text and map to doc positions
   for (const { token, type, isEndToken } of allTokens) {
     let searchPos = 0;
     while ((searchPos = fullText.indexOf(token, searchPos)) !== -1) {
-      const startEntry = posMap.find(p => p.textPos === searchPos);
-      const endEntry = posMap.find(p => p.textPos === searchPos + token.length - 1);
+      const startDocPos = getDocPos(searchPos);
+      const endDocPos = getDocPos(searchPos + token.length - 1);
       
-      if (startEntry && endEntry) {
+      if (startDocPos !== -1 && endDocPos !== -1) {
         tokens.push({
-          from: startEntry.docPos,
-          to: endEntry.docPos + 1,
+          from: startDocPos,
+          to: endDocPos + 1,
           token,
           type,
           isEndToken,

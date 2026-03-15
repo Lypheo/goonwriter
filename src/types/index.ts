@@ -23,6 +23,8 @@ export interface Story {
   htmlContent: string; // HTML with authorship marks (source of truth)
   totalCost: number; // Accumulated generation cost in USD
   totalTokens: number; // Accumulated token usage
+  chapterSummaries?: string;
+  chapterNumber?: number;
   createdAt: number;
   updatedAt: number;
 }
