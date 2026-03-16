@@ -74,9 +74,14 @@ export const useModelStore = create<ModelState>()(
             fetchData<ModelConfig[]>('models'),
             fetchData<{ selectedModelId: string | null; samplingParams: SamplingParams }>('settings'),
           ]);
+
+          const normalizedModels = (models || []).map((model) => ({
+            ...model,
+            disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
+          }));
           
           set({
-            models: models || [],
+            models: normalizedModels,
             selectedModelId: settings?.selectedModelId || null,
             samplingParams: settings?.samplingParams || { ...DEFAULT_SAMPLING_PARAMS },
             isInitialized: true,

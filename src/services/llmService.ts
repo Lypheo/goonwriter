@@ -131,13 +131,18 @@ function buildRequestBody(
 function buildChatRequestBody(
   model: ModelConfig,
   messages: ChatMessage[],
-  samplingParams: SamplingParams
+  samplingParams: SamplingParams,
+  disableThinking: boolean = false
 ): ChatCompletionRequest {
   const body: ChatCompletionRequest = {
     model: model.modelId,
     messages,
     stream: true,
   };
+
+  if (disableThinking) {
+    body.reasoning = { enabled: false };
+  }
   
   // Add sampling params only if they differ from defaults
   if (samplingParams.temperature !== undefined && samplingParams.temperature !== DEFAULT_SAMPLING_PARAMS.temperature) {
@@ -221,6 +226,7 @@ export interface GenerationCallbacks {
 
 export interface StreamOptions {
   autoThinkTags?: boolean;
+  disableThinking?: boolean;
 }
 
 // Stream completion from the API
@@ -437,7 +443,7 @@ export async function streamChatCompletion(
   options: StreamOptions = {}
 ): Promise<void> {
   const url = `${model.baseUrl.replace(/\/$/, '')}/chat/completions`;
-  const body = buildChatRequestBody(model, messages, samplingParams);
+  const body = buildChatRequestBody(model, messages, samplingParams, !!options.disableThinking);
   
   try {
     const response = await fetch(url, {

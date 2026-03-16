@@ -50,12 +50,14 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     baseUrl: string;
     token: string;
     modelId: string;
+    disableThinkingPrefill: string;
     instructionTemplate: InstructionTemplate;
   }>({
     name: '',
     baseUrl: '',
     token: '',
     modelId: '',
+    disableThinkingPrefill: '</think>',
     instructionTemplate: { ...defaultInstructionTemplate },
   });
   
@@ -91,6 +93,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
         baseUrl: '',
         token: '',
         modelId: '',
+        disableThinkingPrefill: '</think>',
         instructionTemplate: { ...defaultInstructionTemplate },
       });
       setAllowedProvidersText('');
@@ -109,6 +112,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       baseUrl: model.baseUrl,
       token: model.token,
       modelId: model.modelId,
+      disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
       instructionTemplate: { ...model.instructionTemplate },
     });
     setAllowedProvidersText(model.instructionTemplate.allowedProviders.join(', '));
@@ -140,6 +144,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       baseUrl: 'https://openrouter.ai/api/v1',
       token: '',
       modelId: '',
+      disableThinkingPrefill: '</think>',
       instructionTemplate: { ...defaultInstructionTemplate },
     });
     setSelectedId(newModel.id);
@@ -345,6 +350,13 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 value={formData.token}
                 onChange={(e) => setFormData((prev) => ({ ...prev, token: e.target.value }))}
                 placeholder="sk-..."
+              />
+
+              <Input
+                label="Disable Thinking Prefill"
+                value={formData.disableThinkingPrefill}
+                onChange={(e) => setFormData((prev) => ({ ...prev, disableThinkingPrefill: e.target.value }))}
+                placeholder="</think>"
               />
               
               {/* Instruction Template */}

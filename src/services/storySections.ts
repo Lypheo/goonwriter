@@ -2,6 +2,12 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Story, StorySection, ChatMessage } from '../types';
 import { SPECIAL_TOKENS } from '../types';
 
+interface GenerationPromptOptions {
+  chapterSummaries?: string;
+  disableThinkingPrefill?: string;
+  disableThinking?: boolean;
+}
+
 function createSection(type: StorySection['type'], content = '', thinkingContent = ''): StorySection {
   return {
     id: uuidv4(),
@@ -26,12 +32,29 @@ function splitThinkContent(text: string): { content: string; thinkingContent: st
   };
 }
 
-function composeAssistantPromptContent(section: StorySection, includeThinking: boolean): string {
+function composeAssistantPromptContent(
+  section: StorySection,
+  includeThinking: boolean,
+  disableThinkingPrefill = '',
+  disableThinking = false
+): string {
   const responseContent = section.content || '';
   const thought = (section.thinkingContent || '').trim();
 
   if (includeThinking && thought) {
     return `${SPECIAL_TOKENS.START_THINK}${thought}${SPECIAL_TOKENS.END_THINK}${responseContent}`;
+  }
+
+  if (includeThinking && !thought) {
+    const trimmedResponse = responseContent.trim();
+
+    if (trimmedResponse.length > 0 && disableThinkingPrefill) {
+      return `${disableThinkingPrefill}${responseContent}`;
+    }
+
+    if (disableThinking && trimmedResponse.length === 0 && disableThinkingPrefill) {
+      return disableThinkingPrefill;
+    }
   }
 
   return responseContent;
@@ -182,8 +205,10 @@ export function storySectionsToChatMessages(sections: StorySection[]): ChatMessa
   return messages;
 }
 
-export function storySectionsToGenerationPrompt(sections: StorySection[], chapterSummaries?: string): string {
+export function storySectionsToGenerationPrompt(sections: StorySection[], options: GenerationPromptOptions = {}): string {
   const lastAssistantIndex = [...sections].map((section) => section.type).lastIndexOf('assistant');
+  const disableThinkingPrefill = options.disableThinkingPrefill || '';
+  const disableThinking = options.disableThinking || false;
 
   const prompt = sections
     .map((section, index) => {
@@ -194,13 +219,13 @@ export function storySectionsToGenerationPrompt(sections: StorySection[], chapte
         return `${SPECIAL_TOKENS.START_USER}${section.content}${SPECIAL_TOKENS.END_USER}`;
       }
       if (index === lastAssistantIndex) {
-        return `${SPECIAL_TOKENS.START_AI}${composeAssistantPromptContent(section, true)}`;
+        return `${SPECIAL_TOKENS.START_AI}${composeAssistantPromptContent(section, true, disableThinkingPrefill, disableThinking)}`;
       }
-      return `${SPECIAL_TOKENS.START_AI}${composeAssistantPromptContent(section, false)}${SPECIAL_TOKENS.END_AI}`;
+      return `${SPECIAL_TOKENS.START_AI}${composeAssistantPromptContent(section, false, disableThinkingPrefill, disableThinking)}${SPECIAL_TOKENS.END_AI}`;
     })
     .join('');
 
-  return expandRawPromptPlaceholders(prompt, chapterSummaries);
+  return expandRawPromptPlaceholders(prompt, options.chapterSummaries);
 }
 
 export function deriveFlatStoryContent(sections: StorySection[]): string {

@@ -53,6 +53,7 @@ export interface ModelConfig {
   baseUrl: string;
   token: string;
   modelId: string;
+  disableThinkingPrefill: string;
   instructionTemplate: InstructionTemplate;
   createdAt: number;
   updatedAt: number;
@@ -132,6 +133,9 @@ export interface ChatCompletionRequest {
   model: string;
   messages: ChatMessage[];
   stream: true;
+  reasoning?: {
+    enabled: boolean;
+  };
   temperature?: number;
   top_p?: number;
   top_k?: number;

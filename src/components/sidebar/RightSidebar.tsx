@@ -55,6 +55,7 @@ export function RightSidebar() {
   const [showRawPromptModal, setShowRawPromptModal] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [autoThinkTags, setAutoThinkTags] = useState(true);
+  const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   
   const completionModels = useCompletionModelStore((s) => s.models);
@@ -243,12 +244,16 @@ export function RightSidebar() {
           samplingParams,
           callbacks,
           abortController.signal,
-          { autoThinkTags }
+          { autoThinkTags, disableThinking }
         );
       } else {
         await streamCompletion(
           selectedModel,
-          storySectionsToGenerationPrompt(workingSections, selectedStory.chapterSummaries),
+          storySectionsToGenerationPrompt(workingSections, {
+            chapterSummaries: selectedStory.chapterSummaries,
+            disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
+            disableThinking,
+          }),
           samplingParams,
           callbacks,
           abortController.signal,
@@ -261,7 +266,7 @@ export function RightSidebar() {
       });
       stopGeneration();
     }
-  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, useChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
+  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, disableThinking, useChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
   
   // Ctrl+Enter hotkey for generate/stop
   useEffect(() => {
@@ -288,7 +293,11 @@ export function RightSidebar() {
     ? replacePlaceholdersWithModelTokens(
         storySectionsToGenerationPrompt(
           ensureAssistantTail(selectedStory.sections || []).sections,
-          selectedStory.chapterSummaries
+          {
+            chapterSummaries: selectedStory.chapterSummaries,
+            disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
+            disableThinking,
+          }
         ),
         selectedModel.instructionTemplate
       )
@@ -391,6 +400,18 @@ export function RightSidebar() {
             className="rounded border-gray-300"
           />
           <span>Use chat completions</span>
+        </label>
+        <label
+          className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
+          title="Disable reasoning generation. In text mode, applies no-thinking prefill only when the current assistant section is empty. In chat mode, sends reasoning.enabled=false."
+        >
+          <input
+            type="checkbox"
+            checked={disableThinking}
+            onChange={(e) => setDisableThinking(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <span>Disable thinking</span>
         </label>
         {!isGenerating ? (
           <Button
