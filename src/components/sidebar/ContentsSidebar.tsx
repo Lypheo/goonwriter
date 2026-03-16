@@ -30,7 +30,7 @@ export function ContentsSidebar() {
   };
 
   return (
-    <div className="w-64 h-full bg-gray-50 border-r border-gray-200 flex flex-col">
+    <div className="w-full h-full bg-gray-50 border-r border-gray-200 flex flex-col">
       <div className="p-3 border-b border-gray-200">
         <h2 className="font-semibold text-gray-800">Contents</h2>
       </div>

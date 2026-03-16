@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
-import { streamCompletion, streamChatCompletion } from '../../services/llmService';
+import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
 import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
-import { Button, Select, Slider } from '../ui/common';
+import { Button, Modal, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
@@ -52,6 +52,8 @@ export function RightSidebar() {
   
   const [showModelDialog, setShowModelDialog] = useState(false);
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
+  const [showRawPromptModal, setShowRawPromptModal] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   
@@ -246,7 +248,7 @@ export function RightSidebar() {
       } else {
         await streamCompletion(
           selectedModel,
-          storySectionsToGenerationPrompt(workingSections),
+          storySectionsToGenerationPrompt(workingSections, selectedStory.chapterSummaries),
           samplingParams,
           callbacks,
           abortController.signal,
@@ -280,6 +282,28 @@ export function RightSidebar() {
   
   const handleStop = () => {
     stopGeneration();
+  };
+
+  const rawPromptPreview = selectedStory && selectedModel
+    ? replacePlaceholdersWithModelTokens(
+        storySectionsToGenerationPrompt(
+          ensureAssistantTail(selectedStory.sections || []).sections,
+          selectedStory.chapterSummaries
+        ),
+        selectedModel.instructionTemplate
+      )
+    : '';
+
+  const handleCopyRawPrompt = async () => {
+    if (!rawPromptPreview) return;
+    try {
+      await navigator.clipboard.writeText(rawPromptPreview);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
+
+    window.setTimeout(() => setCopyStatus('idle'), 1500);
   };
   
   const modelOptions = [
@@ -387,10 +411,26 @@ export function RightSidebar() {
             <span className="ml-2">Stop</span>
           </Button>
         )}
+
+        <div className="flex justify-end mt-2">
+          <button
+            onClick={() => setShowRawPromptModal(true)}
+            disabled={!selectedStory || !selectedModel}
+            title="Preview the exact raw prompt sent to /completions"
+            className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:no-underline disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Preview raw prompt
+          </button>
+        </div>
         
         {!selectedStory && (
           <p className="mt-2 text-xs text-gray-500 text-center">
             Select a story to generate
+          </p>
+        )}
+        {selectedStory && !selectedModel && (
+          <p className="mt-2 text-xs text-gray-500 text-center">
+            Select a model to preview raw prompt
           </p>
         )}
       </div>
@@ -468,6 +508,42 @@ export function RightSidebar() {
         isOpen={showCompletionDialog}
         onClose={() => setShowCompletionDialog(false)}
       />
+
+      <Modal
+        isOpen={showRawPromptModal}
+        onClose={() => setShowRawPromptModal(false)}
+        title="Raw Prompt Preview"
+        size="xl"
+      >
+        {!selectedStory || !selectedModel ? (
+          <p className="text-sm text-gray-500">Select a story and model to preview prompt content.</p>
+        ) : (
+          <div className="space-y-3">
+            {useChatCompletion && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                Chat completions mode is enabled. This preview shows the raw <code>/completions</code> prompt format.
+              </p>
+            )}
+            <div className="border border-gray-300 rounded-md bg-gray-50">
+              <textarea
+                readOnly
+                value={rawPromptPreview}
+                className="w-full h-[55vh] px-3 py-2 text-xs text-gray-800 font-mono border-0 rounded-md bg-gray-50 focus:ring-0 resize-none"
+                spellCheck={false}
+              />
+            </div>
+            <div className="flex justify-between items-center">
+              <span className={`text-xs ${copyStatus === 'failed' ? 'text-red-600' : 'text-gray-500'}`}>
+                {copyStatus === 'copied' ? 'Copied to clipboard' : copyStatus === 'failed' ? 'Copy failed' : `${rawPromptPreview.length.toLocaleString()} characters`}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setShowRawPromptModal(false)}>Close</Button>
+                <Button onClick={handleCopyRawPrompt} disabled={!rawPromptPreview}>Copy</Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

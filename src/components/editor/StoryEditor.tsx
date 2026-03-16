@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import Document from '@tiptap/extension-document';
 import Paragraph from '@tiptap/extension-paragraph';
@@ -167,8 +167,6 @@ export function StoryEditor() {
 
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [templateDraft, setTemplateDraft] = useState('');
-  const [showSummariesEditor, setShowSummariesEditor] = useState(false);
-  const [summariesDraft, setSummariesDraft] = useState('');
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [pendingCaret, setPendingCaret] = useState<{ sectionId: string; index: number } | null>(null);
   const [pendingRemoveSectionId, setPendingRemoveSectionId] = useState<string | null>(null);
@@ -284,26 +282,14 @@ export function StoryEditor() {
   };
 
   const resolveTemplate = () => {
-    if (!selectedStory) return null;
-
     const cursorMarker = '{cursor}';
-    const chapterNum = selectedStory.chapterNumber ?? 1;
-    const summaries = (selectedStory.chapterSummaries ?? '').split(/\r?\n/);
-
-    let resolved = userCommandTemplate.replace(/\{\{\s*n\s*\}\}/g, chapterNum.toString());
-
-    resolved = resolved.replace(/\{\{\s*(-?\d+)\s*\}\}/g, (_, match) => {
-      const targetNum = chapterNum + parseInt(match, 10);
-      const idx = targetNum - 1;
-      return idx >= 0 && idx < summaries.length ? summaries[idx] : `[Missing Summary ${targetNum}]`;
-    });
-
+    let resolved = userCommandTemplate;
     resolved = resolved.replace(/\\n/g, '\n');
 
     const cursorIndex = resolved.indexOf(cursorMarker);
     const text = resolved.replace(cursorMarker, '');
 
-    return { text, cursorIndex: cursorIndex >= 0 ? cursorIndex : text.length, chapterNum };
+    return { text, cursorIndex: cursorIndex >= 0 ? cursorIndex : text.length };
   };
 
   useEffect(() => {
@@ -322,14 +308,17 @@ export function StoryEditor() {
     }
   }, [pendingRemoveSectionId, sections]);
 
-  const handleEditorReady = (sectionId: string, editor: Editor | null) => {
+  const handleEditorReady = useCallback((sectionId: string, editor: Editor | null) => {
+    const current = sectionEditorsRef.current.get(sectionId) ?? null;
+    if (current === editor) return;
+
     if (editor) {
       sectionEditorsRef.current.set(sectionId, editor);
     } else {
       sectionEditorsRef.current.delete(sectionId);
     }
     setHistoryTick((t) => t + 1);
-  };
+  }, []);
 
   const activeEditor = useMemo(() => {
     if (activeSectionId) {
@@ -399,54 +388,16 @@ export function StoryEditor() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
               </svg>
             </button>
-            <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
-              <input
-                type="number"
-                min="1"
-                className="w-12 h-6 px-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                value={selectedStory.chapterNumber ?? 1}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  if (!Number.isNaN(val)) {
-                    updateStory(selectedStory.id, { chapterNumber: val });
-                  }
-                }}
-                title="Chapter number (n)"
-              />
-              <button
-                onClick={() => {
-                  setSummariesDraft(selectedStory.chapterSummaries ?? '');
-                  setShowSummariesEditor(true);
-                }}
-                className="p-1 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                title="Edit Chapter Summaries"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
-            </div>
             <button
               onClick={() => {
                 const resolved = resolveTemplate();
-                if (!resolved) return;
                 const newSectionId = insertUserTurn(resolved.text);
                 if (newSectionId) {
                   setPendingCaret({ sectionId: newSectionId, index: resolved.cursorIndex });
                 }
-                updateStory(selectedStory.id, { chapterNumber: resolved.chapterNum + 1 });
               }}
-              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-              title="Insert user section from template"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => insertUserTurn('')}
               className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
-              title="Create new user section + following assistant section"
+              title="Create new user section + following assistant section from template"
             >
               New User Turn
             </button>
@@ -489,6 +440,8 @@ export function StoryEditor() {
                 const effectiveCollapsed = collapsible && section.collapsed;
                 const hasThinkSubsection = section.type === 'assistant';
                 const thinkCollapsed = hasThinkSubsection && !expandedThinkSectionIds.has(section.id);
+                const thinkingText = (section.thinkingContent || '').trim();
+                const hasThinkingContent = thinkingText.length > 0;
 
                 return (
                   <>
@@ -548,17 +501,35 @@ export function StoryEditor() {
               </div>
 
               {effectiveCollapsed ? (
-                <div className="px-3 py-2">
+                <div
+                  className="px-3 py-2 cursor-pointer"
+                  onClick={() => updateSection(section.id, { collapsed: false })}
+                  title="Click to expand section"
+                >
                   <SectionCollapsedPreview section={section} />
                 </div>
               ) : (
                 <div className="px-3 py-2">
                   {section.type === 'assistant' && (
                     <div className="mb-3 rounded-md border border-violet-200 bg-violet-50/50">
-                      <div className="px-3 py-2 flex items-center justify-between border-b border-violet-200/70">
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Thinking</span>
+                      <div
+                        className={`px-3 py-2 flex items-center justify-between ${thinkCollapsed ? 'cursor-pointer hover:bg-violet-100/40' : ''} ${thinkCollapsed ? '' : 'border-b border-violet-200/70'}`}
+                        onClick={thinkCollapsed ? () => toggleThinkCollapsed(section.id) : undefined}
+                        title={thinkCollapsed ? 'Click to expand thinking subsection' : undefined}
+                      >
+                        <div className="inline-flex items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Thinking</span>
+                          {thinkCollapsed && (
+                            !hasThinkingContent  && <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium tracking-normal normal-case bg-gray-100 text-gray-600 border border-gray-200">
+                                Empty
+                            </span>
+                          )}
+                        </div>
                         <button
-                          onClick={() => toggleThinkCollapsed(section.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleThinkCollapsed(section.id);
+                          }}
                           className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white/80 px-2 py-0.5 text-[11px] text-violet-700 hover:bg-white"
                           title={thinkCollapsed ? 'Expand thinking subsection' : 'Collapse thinking subsection'}
                         >
@@ -567,7 +538,7 @@ export function StoryEditor() {
                       </div>
 
                       {thinkCollapsed ? (
-                        <div className="h-1" aria-hidden="true" />
+                        <div className="h-0" aria-hidden="true" />
                       ) : (
                         <div className="px-3 py-2">
                           <SectionInlineEditor
@@ -648,6 +619,9 @@ export function StoryEditor() {
             <p className="text-xs text-gray-500 mb-3">
               Use <code className="bg-gray-100 px-1 rounded">{'{cursor}'}</code> to mark where cursor should land. Use <code className="bg-gray-100 px-1 rounded">\n</code> for newlines.
             </p>
+            <p className="text-xs text-gray-500 mb-3">
+              Raw prompt placeholders are resolved at generation time: <code className="bg-gray-100 px-1 rounded">{'{summaries}'}</code> inserts all chapter summaries, <code className="bg-gray-100 px-1 rounded">{'{cs}'}</code> inserts the current chapter summary and advances, and <code className="bg-gray-100 px-1 rounded">{'{cn}'}</code> inserts the current chapter number.
+            </p>
             <textarea
               value={templateDraft}
               onChange={(e) => setTemplateDraft(e.target.value)}
@@ -677,36 +651,6 @@ export function StoryEditor() {
         </div>
       )}
 
-      {showSummariesEditor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSummariesEditor(false)}>
-          <div className="bg-white rounded-lg shadow-xl w-[800px] p-4 flex flex-col h-[70vh] max-h-[800px]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">Chapter Summaries</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Enter one summary per line. The first line is Chapter 1, the second is Chapter 2, etc. Use <code className="bg-gray-100 px-1 rounded">{'{{n}}'}</code> in the User Command Template.
-            </p>
-            <textarea
-              value={summariesDraft}
-              onChange={(e) => setSummariesDraft(e.target.value)}
-              className="w-full flex-1 px-3 py-2 text-sm font-mono border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none"
-              spellCheck={false}
-            />
-            <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setShowSummariesEditor(false)} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  updateStory(selectedStory.id, { chapterSummaries: summariesDraft });
-                  setShowSummariesEditor(false);
-                }}
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

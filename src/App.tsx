@@ -1,14 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { LeftSidebar } from './components/sidebar/LeftSidebar';
 import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
+import { ChapterSummariesSidebar } from './components/sidebar/ChapterSummariesSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
 
+const LibraryIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+  </svg>
+);
+
+const ContentsIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+  </svg>
+);
+
+const NotesIcon = () => (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
+  </svg>
+);
+
+type LeftSidebarView = 'library' | 'contents' | 'summaries';
+
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [leftSidebarView, setLeftSidebarView] = useState<'library' | 'contents'>('library');
+  const [leftSidebarView, setLeftSidebarView] = useState<LeftSidebarView>('library');
+  const [leftPanelWidths, setLeftPanelWidths] = useState<Record<LeftSidebarView, number>>({
+    library: 256,
+    contents: 256,
+    summaries: 256,
+  });
+  const isResizingRef = useRef(false);
   
   // The initialized states are tracked internally by the stores
   
@@ -72,26 +99,89 @@ function App() {
       </div>
     );
   }
+
+  const startLeftPanelResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    isResizingRef.current = true;
+    const resizingView = leftSidebarView;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+
+      const nextWidth = moveEvent.clientX - 48;
+      setLeftPanelWidths((prev) => ({
+        ...prev,
+        [resizingView]: Math.max(0, nextWidth),
+      }));
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
   
   return (
-    <div className="h-screen flex overflow-hidden bg-white relative">
-      <div className="absolute left-2 top-2 z-20 inline-flex rounded-md border border-gray-200 bg-white/95 p-0.5 shadow-sm">
+    <div className="h-screen flex overflow-hidden bg-white">
+      <div className="w-12 h-full bg-gray-50 border-r border-gray-200 flex flex-col items-center py-2 gap-1">
         <button
           onClick={() => setLeftSidebarView('library')}
-          className={`px-2 py-1 text-xs rounded ${leftSidebarView === 'library' ? 'bg-gray-200 text-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
+          className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
+            leftSidebarView === 'library'
+              ? 'bg-gray-200 text-gray-800'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+          title="Library"
+          aria-label="Open library sidebar"
         >
-          Library
+          <LibraryIcon />
         </button>
         <button
           onClick={() => setLeftSidebarView('contents')}
-          className={`px-2 py-1 text-xs rounded ${leftSidebarView === 'contents' ? 'bg-gray-200 text-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
+          className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
+            leftSidebarView === 'contents'
+              ? 'bg-gray-200 text-gray-800'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+          title="Contents"
+          aria-label="Open contents sidebar"
         >
-          Contents
+          <ContentsIcon />
+        </button>
+        <button
+          onClick={() => setLeftSidebarView('summaries')}
+          className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
+            leftSidebarView === 'summaries'
+              ? 'bg-gray-200 text-gray-800'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+          }`}
+          title="Chapter Summaries"
+          aria-label="Open chapter summaries sidebar"
+        >
+          <NotesIcon />
         </button>
       </div>
 
-      {/* Left Sidebar */}
-      {leftSidebarView === 'library' ? <LeftSidebar /> : <ContentsSidebar />}
+      {/* Left Sidebar Panel */}
+      <div style={{ width: `${leftPanelWidths[leftSidebarView]}px` }} className="h-full shrink-0">
+        {leftSidebarView === 'library' && <LeftSidebar />}
+        {leftSidebarView === 'contents' && <ContentsSidebar />}
+        {leftSidebarView === 'summaries' && <ChapterSummariesSidebar />}
+      </div>
+
+      <div
+        className="w-1.5 h-full cursor-col-resize bg-transparent hover:bg-gray-200 active:bg-gray-300 transition-colors"
+        onMouseDown={startLeftPanelResize}
+        title="Resize sidebar"
+      />
       
       {/* Main Editor Area */}
       <StoryEditor />

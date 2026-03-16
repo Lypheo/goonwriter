@@ -37,6 +37,33 @@ function composeAssistantPromptContent(section: StorySection, includeThinking: b
   return responseContent;
 }
 
+function expandRawPromptPlaceholders(prompt: string, chapterSummaries?: string): string {
+  const summaries = (chapterSummaries || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const summariesList = summaries
+    .map((summary, index) => `${index + 1}. ${summary}`)
+    .join('\n');
+
+  let currentChapter = 1;
+
+  return prompt.replace(/\{summaries\}|\{cs\}|\{cn\}/g, (match) => {
+    if (match === '{summaries}') {
+      return summariesList;
+    }
+
+    if (match === '{cs}') {
+      const summary = summaries[currentChapter - 1] || '';
+      currentChapter += 1;
+      return summary;
+    }
+
+    return String(currentChapter);
+  });
+}
+
 export function createInitialSections(): StorySection[] {
   return [
     createSection('system', ''),
@@ -134,32 +161,31 @@ export function storySectionsToChatMessages(sections: StorySection[]): ChatMessa
     : -1;
 
   for (const [index, section] of sections.entries()) {
-    const assistantComposed = section.type === 'assistant'
+    const msg = section.type === 'assistant'
       ? composeAssistantPromptContent(section, index === includeThinkingAssistantIndex)
       : section.content;
-    const trimmed = assistantComposed.trim();
-    if (!trimmed) continue;
+    if (!msg) continue;
 
     if (section.type === 'system') {
       if (!messages.some((m) => m.role === 'system')) {
-        messages.push({ role: 'system', content: trimmed });
+        messages.push({ role: 'system', content: msg });
       }
       continue;
     }
 
     messages.push({
       role: section.type === 'assistant' ? 'assistant' : 'user',
-      content: trimmed,
+      content: msg,
     });
   }
 
   return messages;
 }
 
-export function storySectionsToGenerationPrompt(sections: StorySection[]): string {
+export function storySectionsToGenerationPrompt(sections: StorySection[], chapterSummaries?: string): string {
   const lastAssistantIndex = [...sections].map((section) => section.type).lastIndexOf('assistant');
 
-  return sections
+  const prompt = sections
     .map((section, index) => {
       if (section.type === 'system') {
         return `${SPECIAL_TOKENS.START_SYS_PROMPT}${section.content}${SPECIAL_TOKENS.END_SYS_PROMPT}`;
@@ -173,6 +199,8 @@ export function storySectionsToGenerationPrompt(sections: StorySection[]): strin
       return `${SPECIAL_TOKENS.START_AI}${composeAssistantPromptContent(section, false)}${SPECIAL_TOKENS.END_AI}`;
     })
     .join('');
+
+  return expandRawPromptPlaceholders(prompt, chapterSummaries);
 }
 
 export function deriveFlatStoryContent(sections: StorySection[]): string {
