@@ -7,6 +7,8 @@ import type {
   ChatMessage,
   ChatCompletionRequest,
   ChatCompletionChunk,
+  CompletionModelConfig,
+  UsageInfo,
 } from '../types';
 import { SPECIAL_TOKENS, DEFAULT_SAMPLING_PARAMS } from '../types';
 
@@ -227,6 +229,270 @@ export interface GenerationCallbacks {
 export interface StreamOptions {
   autoThinkTags?: boolean;
   disableThinking?: boolean;
+}
+
+export interface SentenceCompletionResult {
+  text: string;
+  usage?: UsageInfo;
+}
+
+export interface SentenceCompletionCallbacks {
+  onChunk: (fullText: string) => void;
+  onUsage: (usage: UsageInfo) => void;
+  onError: (error: string) => void;
+  onComplete: (finalText: string) => void;
+}
+
+const SENTENCE_MAX_TOKENS = 80;
+
+function extractFirstSentence(text: string): string {
+  const trimmed = text.trimStart();
+  if (!trimmed) return '';
+
+  const match = trimmed.match(/^(.*?[.!?…])(?:\s|$)/s);
+  if (match) return match[1];
+
+  return trimmed;
+}
+
+async function processSentenceStream(
+  response: Response,
+  onData: (data: any) => boolean
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let contentDone = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.trim() || !line.startsWith('data: ')) continue;
+
+      const payload = line.slice(6).trim();
+      if (payload === '[DONE]') {
+        reader.cancel();
+        return;
+      }
+
+      try {
+        const data = JSON.parse(payload);
+
+        if (data.usage) {
+          onData(data);
+          if (contentDone) {
+            reader.cancel();
+            return;
+          }
+          continue;
+        }
+
+        if (!contentDone) {
+          const shouldStop = onData(data);
+          if (shouldStop) {
+            contentDone = true;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+}
+
+export async function streamSentenceCompletion(
+  model: CompletionModelConfig,
+  context: string,
+  callbacks: SentenceCompletionCallbacks,
+  abortSignal: AbortSignal
+): Promise<void> {
+  const baseUrl = model.baseUrl.replace(/\/$/, '');
+  let accumulated = '';
+
+  const processChunk = (text: string): boolean => {
+    accumulated += text;
+    const sentence = extractFirstSentence(accumulated);
+    callbacks.onChunk(sentence);
+
+    return /[.!?…]\s/.test(accumulated) || /[.!?…]$/.test(accumulated.trim());
+  };
+
+  try {
+    if (model.mode === 'instruction') {
+      const messages: ChatMessage[] = [];
+      if (model.systemMessage.trim()) {
+        messages.push({ role: 'system', content: model.systemMessage });
+      }
+      messages.push({ role: 'user', content: `${model.prompt || ''}${context}` });
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${model.token}`,
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          messages,
+          stream: true,
+          stream_options: { include_usage: true },
+          max_tokens: SENTENCE_MAX_TOKENS,
+          temperature: 0.7,
+        }),
+        signal: abortSignal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        callbacks.onError(`API error ${response.status}: ${errText}`);
+        return;
+      }
+
+      await processSentenceStream(response, (data) => {
+        const content = data.choices?.[0]?.delta?.content || '';
+        if (content) {
+          return processChunk(content);
+        }
+        if (data.usage) {
+          callbacks.onUsage(data.usage);
+        }
+        return false;
+      });
+    } else {
+      const response = await fetch(`${baseUrl}/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${model.token}`,
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          prompt: context,
+          stream: true,
+          stream_options: { include_usage: true },
+          max_tokens: SENTENCE_MAX_TOKENS,
+          temperature: 0.7,
+        }),
+        signal: abortSignal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        callbacks.onError(`API error ${response.status}: ${errText}`);
+        return;
+      }
+
+      await processSentenceStream(response, (data) => {
+        const text = data.choices?.[0]?.text || '';
+        if (text) {
+          return processChunk(text);
+        }
+        if (data.usage) {
+          callbacks.onUsage(data.usage);
+        }
+        return false;
+      });
+    }
+
+    callbacks.onComplete(extractFirstSentence(accumulated));
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      callbacks.onComplete(extractFirstSentence(accumulated));
+    } else {
+      callbacks.onError(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+}
+
+export async function requestSentenceCompletion(
+  model: CompletionModelConfig,
+  context: string,
+  abortSignal?: AbortSignal
+): Promise<SentenceCompletionResult> {
+  if (!model.baseUrl.trim() || !model.modelId.trim()) {
+    return { text: '' };
+  }
+
+  if (model.mode === 'instruction') {
+    const url = `${model.baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const messages: ChatMessage[] = [];
+
+    if (model.systemMessage.trim()) {
+      messages.push({ role: 'system', content: model.systemMessage });
+    }
+
+    messages.push({
+      role: 'user',
+      content: `${model.prompt || ''}${context}`,
+    });
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${model.token}`,
+      },
+      body: JSON.stringify({
+        model: model.modelId,
+        messages,
+        stream: false,
+      }),
+      signal: abortSignal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Completion API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: UsageInfo;
+    };
+
+    return {
+      text: data.choices?.[0]?.message?.content || '',
+      usage: data.usage,
+    };
+  }
+
+  const url = `${model.baseUrl.replace(/\/$/, '')}/completions`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${model.token}`,
+    },
+    body: JSON.stringify({
+      model: model.modelId,
+      prompt: context,
+      stream: false,
+    }),
+    signal: abortSignal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Completion API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json() as {
+    choices?: Array<{ text?: string }>;
+    usage?: UsageInfo;
+  };
+
+  return {
+    text: data.choices?.[0]?.text || '',
+    usage: data.usage,
+  };
 }
 
 // Stream completion from the API

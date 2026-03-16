@@ -8,8 +8,10 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { UndoRedo } from '@tiptap/extensions';
 import type { Editor } from '@tiptap/core';
 import { useAppStore, useCompletionModelStore, useDataStore, useGenerationStore } from '../../stores';
-import type { StorySection } from '../../types';
+import type { CompletionModelConfig, StorySection } from '../../types';
 import { deriveFlatStoryContent } from '../../services/storySections';
+import { streamSentenceCompletion } from '../../services/llmService';
+import { CompletionPopup, type CompletionItem } from './CompletionPopup';
 import { StoryDecorations } from './extensions';
 
 function createSection(type: StorySection['type'], content = ''): StorySection {
@@ -51,8 +53,10 @@ function SectionInlineEditor({
   isGenerating,
   onChange,
   onFocus,
+  onBlur,
   focusIndex,
   onEditorReady,
+  onKeyDown,
   collapseThinkBlocks,
 }: {
   sectionId: string;
@@ -60,8 +64,10 @@ function SectionInlineEditor({
   isGenerating: boolean;
   onChange: (content: string) => void;
   onFocus: () => void;
+  onBlur?: (event: FocusEvent | null) => void;
   focusIndex?: number | null;
   onEditorReady: (sectionId: string, editor: Editor | null) => void;
+  onKeyDown?: (editor: Editor, event: KeyboardEvent) => boolean;
   collapseThinkBlocks: boolean;
 }) {
   const editor = useEditor({
@@ -81,8 +87,25 @@ function SectionInlineEditor({
     content: textToHtml(section.content),
     editable: !isGenerating,
     onFocus,
+    onBlur: ({ event }) => {
+      onBlur?.(event as FocusEvent);
+    },
     onUpdate: ({ editor }) => {
       onChange(editor.getText({ blockSeparator: '\n\n' }));
+    },
+    editorProps: {
+      handleKeyDown: (_view, event) => {
+        if (editor && onKeyDown) {
+          const handled = onKeyDown(editor, event as KeyboardEvent);
+          if (handled) {
+            event.preventDefault();
+            event.stopPropagation();
+            (event as KeyboardEvent).stopImmediatePropagation?.();
+            return true;
+          }
+        }
+        return false;
+      },
     },
   });
 
@@ -112,6 +135,25 @@ function SectionInlineEditor({
       onEditorReady(sectionId, null);
     };
   }, [editor, onEditorReady, sectionId]);
+
+  useEffect(() => {
+    if (!editor || !onKeyDown) return;
+
+    const editorDom = editor.view.dom;
+    const handleCapture = (event: KeyboardEvent) => {
+      const handled = onKeyDown(editor, event);
+      if (!handled) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    editorDom.addEventListener('keydown', handleCapture, true);
+    return () => {
+      editorDom.removeEventListener('keydown', handleCapture, true);
+    };
+  }, [editor, onKeyDown]);
 
   return (
     <EditorContent
@@ -172,9 +214,20 @@ export function StoryEditor() {
   const [pendingRemoveSectionId, setPendingRemoveSectionId] = useState<string | null>(null);
   const [expandedThinkSectionIds, setExpandedThinkSectionIds] = useState<Set<string>>(new Set());
   const [historyTick, setHistoryTick] = useState(0);
+  const [completionItems, setCompletionItems] = useState<CompletionItem[]>([]);
+  const [completionVisible, setCompletionVisible] = useState(false);
+  const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0);
+  const [completionPosition, setCompletionPosition] = useState({ top: 0, left: 0 });
   const sectionEditorsRef = useRef<Map<string, Editor>>(new Map());
+  const completionAbortControllers = useRef<Map<string, AbortController>>(new Map());
+  const completionActiveRef = useRef(false);
+  const completionItemsRef = useRef<CompletionItem[]>([]);
+  const completionSelectedIndexRef = useRef(0);
+  const completionEditorRef = useRef<Editor | null>(null);
 
   const completionModels = useCompletionModelStore((s) => s.models);
+  const getEnabledCompletionModels = useCompletionModelStore((s) => s.getEnabledModels);
+  const accumulateCompletionCost = useCompletionModelStore((s) => s.accumulateCost);
   const totalCompletionCost = completionModels.reduce((sum, m) => sum + m.totalCost, 0);
   const totalCompletionTokens = completionModels.reduce((sum, m) => sum + m.totalTokens, 0);
 
@@ -223,7 +276,7 @@ export function StoryEditor() {
     const nextSections = sections.filter((section) => section.id !== sectionId);
     commitSections(nextSections);
 
-    if (activeSectionId === sectionId) {
+    if (activeSectionId === sectionId || activeSectionId === `${sectionId}:think`) {
       setActiveSectionId(null);
     }
     if (pendingCaret?.sectionId === sectionId) {
@@ -269,7 +322,9 @@ export function StoryEditor() {
   const insertUserTurn = (defaultText = '', afterSectionId?: string) => {
     if (!selectedStory) return;
 
-    const anchorIndex = findInsertAnchorIndex(afterSectionId || activeSectionId || undefined);
+    const anchorKey = afterSectionId || activeSectionId || undefined;
+    const normalizedAnchor = anchorKey?.endsWith(':think') ? anchorKey.slice(0, -':think'.length) : anchorKey;
+    const anchorIndex = findInsertAnchorIndex(normalizedAnchor);
     const userSection = createSection('user', defaultText);
     const assistantSection = createSection('assistant', '');
 
@@ -334,6 +389,228 @@ export function StoryEditor() {
 
   const canUndo = !!activeEditor?.can().undo();
   const canRedo = !!activeEditor?.can().redo();
+
+  const cancelCompletions = useCallback((options?: { refocusEditor?: boolean }) => {
+    const editorToRefocus = options?.refocusEditor ? completionEditorRef.current : null;
+
+    completionAbortControllers.current.forEach((controller) => controller.abort());
+    completionAbortControllers.current.clear();
+    completionActiveRef.current = false;
+    setCompletionVisible(false);
+    setCompletionItems([]);
+    setCompletionSelectedIndex(0);
+
+    if (editorToRefocus) {
+      requestAnimationFrame(() => {
+        editorToRefocus.chain().focus().run();
+      });
+    }
+
+    completionEditorRef.current = null;
+  }, []);
+
+  const acceptCompletion = useCallback((index: number) => {
+    const item = completionItemsRef.current[index];
+    const editor = completionEditorRef.current;
+    if (!item || !item.text || !editor) return;
+
+    cancelCompletions();
+    editor.chain().focus().insertContent(item.text).run();
+  }, [cancelCompletions]);
+
+  const startCompletionRequests = useCallback((editor: Editor) => {
+    if (isGenerating) return;
+
+    const enabledModels = getEnabledCompletionModels();
+    if (enabledModels.length === 0) return;
+
+    const from = editor.state.selection.from;
+    const textBeforeCursor = editor.state.doc.textBetween(0, from, '\n\n');
+    const defaultContextLen = 1000;
+    const contextLength = enabledModels[0]?.contextLength || defaultContextLen;
+    const context = textBeforeCursor.slice(-contextLength);
+    if (!context.trim()) return;
+
+    cancelCompletions();
+    completionActiveRef.current = true;
+    completionEditorRef.current = editor;
+
+    const coords = editor.view.coordsAtPos(from);
+    setCompletionPosition({ top: coords.bottom + 4, left: coords.left });
+    setCompletionSelectedIndex(0);
+
+    const initialItems: CompletionItem[] = enabledModels.map((model) => ({
+      modelId: model.id,
+      modelName: model.name,
+      text: '',
+      isLoading: true,
+    }));
+    setCompletionItems(initialItems);
+    setCompletionVisible(true);
+
+    enabledModels.forEach((model: CompletionModelConfig) => {
+      const controller = new AbortController();
+      completionAbortControllers.current.set(model.id, controller);
+
+      streamSentenceCompletion(model, context, {
+        onChunk: (fullText) => {
+          if (!completionActiveRef.current) return;
+          setCompletionItems((prev) =>
+            prev.map((item) =>
+              item.modelId === model.id
+                ? { ...item, text: fullText }
+                : item
+            )
+          );
+        },
+        onUsage: (usage) => {
+          accumulateCompletionCost(model.id, usage.cost || 0, usage.total_tokens || 0);
+        },
+        onError: (error) => {
+          if (!completionActiveRef.current) return;
+          setCompletionItems((prev) =>
+            prev.map((item) =>
+              item.modelId === model.id
+                ? { ...item, isLoading: false, error }
+                : item
+            )
+          );
+        },
+        onComplete: (finalText) => {
+          if (!completionActiveRef.current) return;
+          setCompletionItems((prev) =>
+            prev.map((item) =>
+              item.modelId === model.id
+                ? { ...item, text: finalText, isLoading: false }
+                : item
+            )
+          );
+        },
+      }, controller.signal)
+        .finally(() => {
+          completionAbortControllers.current.delete(model.id);
+        });
+    });
+  }, [accumulateCompletionCost, cancelCompletions, getEnabledCompletionModels, isGenerating]);
+
+  const handleCompletionKeyDown = useCallback((editor: Editor, event: KeyboardEvent): boolean => {
+    if (completionActiveRef.current) {
+      if (event.key === 'Escape' || event.key === 'Esc') {
+        cancelCompletions({ refocusEditor: true });
+        return true;
+      }
+      if (event.key === 'ArrowDown') {
+        setCompletionSelectedIndex((prev) =>
+          prev < completionItemsRef.current.length - 1 ? prev + 1 : 0
+        );
+        return true;
+      }
+      if (event.key === 'ArrowUp') {
+        setCompletionSelectedIndex((prev) =>
+          prev > 0 ? prev - 1 : completionItemsRef.current.length - 1
+        );
+        return true;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        acceptCompletion(completionSelectedIndexRef.current);
+        return true;
+      }
+      return false;
+    }
+
+    if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      startCompletionRequests(editor);
+      return true;
+    }
+
+    return false;
+  }, [acceptCompletion, cancelCompletions, startCompletionRequests]);
+
+  useEffect(() => {
+    completionItemsRef.current = completionItems;
+  }, [completionItems]);
+
+  useEffect(() => {
+    completionSelectedIndexRef.current = completionSelectedIndex;
+  }, [completionSelectedIndex]);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!completionActiveRef.current) return;
+      const popup = document.querySelector('.completion-popup');
+      if (popup && !popup.contains(event.target as Node)) {
+        cancelCompletions();
+      }
+    };
+
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [cancelCompletions]);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (!completionActiveRef.current) return;
+
+      if (event.key === 'Escape' || event.key === 'Esc') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        cancelCompletions({ refocusEditor: true });
+        return;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        setCompletionSelectedIndex((prev) =>
+          prev < completionItemsRef.current.length - 1 ? prev + 1 : 0
+        );
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        setCompletionSelectedIndex((prev) =>
+          prev > 0 ? prev - 1 : completionItemsRef.current.length - 1
+        );
+        return;
+      }
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        acceptCompletion(completionSelectedIndexRef.current);
+      }
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, [acceptCompletion, cancelCompletions]);
+
+  const handleEditorBlur = useCallback((event: FocusEvent | null) => {
+    if (!completionActiveRef.current) return;
+
+    const nextTarget = (event?.relatedTarget as Node | null) ?? null;
+    const popup = document.querySelector('.completion-popup');
+    const movedIntoPopup = !!(nextTarget && popup && popup.contains(nextTarget));
+    if (movedIntoPopup) return;
+
+    cancelCompletions({ refocusEditor: !nextTarget });
+  }, [cancelCompletions]);
+
+  useEffect(() => {
+    return () => {
+      cancelCompletions();
+    };
+  }, [cancelCompletions]);
+
+  useEffect(() => {
+    cancelCompletions();
+  }, [selectedStoryId, cancelCompletions]);
 
   if (!selectedStory) {
     return (
@@ -428,6 +705,14 @@ export function StoryEditor() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        <CompletionPopup
+          items={completionItems}
+          position={completionPosition}
+          selectedIndex={completionSelectedIndex}
+          onSelect={acceptCompletion}
+          visible={completionVisible}
+        />
+
         <div className="max-w-4xl mx-auto px-6 py-4 space-y-3">
           {sections.map((section) => (
             <div
@@ -549,11 +834,13 @@ export function StoryEditor() {
                             }}
                             isGenerating={isGenerating}
                             onFocus={() => {
-                              setActiveSectionId(section.id);
+                              setActiveSectionId(`${section.id}:think`);
                               setHistoryTick((t) => t + 1);
                             }}
+                            onBlur={handleEditorBlur}
                             onChange={(content) => updateSection(section.id, { thinkingContent: content })}
                             onEditorReady={handleEditorReady}
+                            onKeyDown={handleCompletionKeyDown}
                             collapseThinkBlocks={false}
                           />
                         </div>
@@ -572,9 +859,11 @@ export function StoryEditor() {
                         setPendingCaret(null);
                       }
                     }}
+                    onBlur={handleEditorBlur}
                     onChange={(content) => updateSection(section.id, { content })}
                     focusIndex={pendingCaret?.sectionId === section.id ? pendingCaret.index : null}
                     onEditorReady={handleEditorReady}
+                    onKeyDown={handleCompletionKeyDown}
                     collapseThinkBlocks={false}
                   />
                 </div>
