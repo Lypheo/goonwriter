@@ -1,188 +1,69 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { EditorContent, useEditor } from '@tiptap/react';
 import Document from '@tiptap/extension-document';
 import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
-import Placeholder from '@tiptap/extension-placeholder';
 import HardBreak from '@tiptap/extension-hard-break';
+import Placeholder from '@tiptap/extension-placeholder';
 import { UndoRedo } from '@tiptap/extensions';
-import { useDataStore, useAppStore, useGenerationStore, useModelStore, useCompletionModelStore } from '../../stores';
-import { StoryDecorations, AiAuthored } from './extensions';
-import { CompletionPopup, type CompletionItem } from './CompletionPopup';
-import { streamSentenceCompletion } from '../../services/completionService';
-import type { CompletionModelConfig } from '../../types';
+import type { Editor } from '@tiptap/core';
+import { useAppStore, useCompletionModelStore, useDataStore, useGenerationStore } from '../../stores';
+import type { StorySection } from '../../types';
+import { deriveFlatStoryContent } from '../../services/storySections';
+import { StoryDecorations } from './extensions';
 
-// Escape HTML entities for special tokens that should be visible as-is
-function escapeSpecialTokens(html: string): string {
-  // Only escape angle brackets that are part of special tokens like <<start_sys_prompt>>
-  // but NOT the HTML tags we use for structure
-  return html
-    .replace(/<<([^>]+)>>/g, '&lt;&lt;$1&gt;&gt;');
+function createSection(type: StorySection['type'], content = ''): StorySection {
+  return {
+    id: crypto.randomUUID(),
+    type,
+    content,
+    collapsed: false,
+  };
 }
 
-// Convert plain text with newlines to HTML paragraphs (for legacy migration)
+function getFirstLine(text: string): string {
+  const line = text.split(/\r?\n/, 1)[0] || '';
+  return line.length > 0 ? line : ' ';
+}
+
+function isCollapsibleSection(content: string): boolean {
+  return /\r?\n/.test(content);
+}
+
 function textToHtml(text: string): string {
   if (!text) return '<p></p>';
-  // Split by double newlines for paragraphs
   const paragraphs = text.split(/\n\n+/);
   return paragraphs
-    .map(p => {
-      // Escape special tokens, then convert single newlines to <br>
-      const escaped = escapeSpecialTokens(
-        p.replace(/&/g, '&amp;')
-         .replace(/</g, '&lt;')
-         .replace(/>/g, '&gt;')
-      );
+    .map((p) => {
+      const escaped = p
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
       const withBreaks = escaped.replace(/\n/g, '<br>');
       return `<p>${withBreaks || '<br>'}</p>`;
     })
     .join('');
 }
 
-export function StoryEditor() {
-  const { stories, updateStory } = useDataStore();
-  const { selectedStoryId } = useAppStore();
-  const { userCommandTemplate, setUserCommandTemplate } = useAppStore();
-  const { isGenerating } = useGenerationStore();
-  const { models } = useModelStore();
-  const { getEnabledModels, accumulateCost } = useCompletionModelStore();
-  
-  const selectedStory = stories.find((s) => s.id === selectedStoryId);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedHtmlRef = useRef<string>('');
-  const isUpdatingRef = useRef(false);
-  
-  // User command template editor state
-  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
-  const [templateDraft, setTemplateDraft] = useState('');
-  
-  // Chapter summaries editor state
-  const [showSummariesEditor, setShowSummariesEditor] = useState(false);
-  const [summariesDraft, setSummariesDraft] = useState('');
-  const summariesMirrorRef = useRef<HTMLDivElement>(null);
-  
-  // Track cursor position for authorship display
-  const [cursorAuthor, setCursorAuthor] = useState<{ author: 'user' | 'ai'; modelId?: string }>({ author: 'user' });
-  
-  // Sentence completion state
-  const [completionItems, setCompletionItems] = useState<CompletionItem[]>([]);
-  const [completionVisible, setCompletionVisible] = useState(false);
-  const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0);
-  const [completionPosition, setCompletionPosition] = useState({ top: 0, left: 0 });
-  const completionAbortControllers = useRef<Map<string, AbortController>>(new Map());
-  const completionActiveRef = useRef(false);
-  const editorRef = useRef<ReturnType<typeof useEditor>>(null);
-  
-  // Refs to avoid re-creating the keyboard handler on every streaming chunk
-  const completionItemsRef = useRef<CompletionItem[]>([]);
-  const completionSelectedIndexRef = useRef(0);
-  const acceptCompletionRef = useRef<(index: number) => void>(() => {});
-  
-  // Get the HTML content, migrating from plain text if needed
-  const getEditorContent = useCallback(() => {
-    if (!selectedStory) return '<p></p>';
-    
-    // If htmlContent exists, use it
-    if (selectedStory.htmlContent) {
-      return selectedStory.htmlContent;
-    }
-    
-    // Migration: convert plain text content to HTML
-    return textToHtml(selectedStory.content || '');
-  }, [selectedStory]);
-  
-  // Cancel all active completion streams
-  const cancelCompletions = useCallback(() => {
-    completionAbortControllers.current.forEach((c) => c.abort());
-    completionAbortControllers.current.clear();
-    completionActiveRef.current = false;
-    setCompletionVisible(false);
-    setCompletionItems([]);
-    setCompletionSelectedIndex(0);
-  }, []);
-  
-  // Accept a completion and insert it at cursor
-  const acceptCompletion = useCallback(
-    (index: number) => {
-      const item = completionItemsRef.current[index];
-      if (!item || !item.text || !editorRef.current) return;
-      
-      cancelCompletions();
-      
-      // Insert the text at current cursor position
-      editorRef.current.chain().focus().insertContent(item.text).run();
-    },
-    [cancelCompletions]
-  );
-
-  // Keep ref in sync for keyboard handler
-  acceptCompletionRef.current = acceptCompletion;
-
-  // Keep refs in sync with state
-  completionItemsRef.current = completionItems;
-  completionSelectedIndexRef.current = completionSelectedIndex;
-
-  // Start streaming completions from all enabled models
-  const startCompletionStreams = useCallback(
-    (enabledModels: CompletionModelConfig[], context: string, pos: { top: number; left: number }) => {
-      cancelCompletions();
-      completionActiveRef.current = true;
-      
-      setCompletionPosition(pos);
-      setCompletionSelectedIndex(0);
-      
-      const initialItems: CompletionItem[] = enabledModels.map((m) => ({
-        modelId: m.id,
-        modelName: m.name,
-        text: '',
-        isLoading: true,
-      }));
-      setCompletionItems(initialItems);
-      setCompletionVisible(true);
-      
-      enabledModels.forEach((model) => {
-        const controller = new AbortController();
-        completionAbortControllers.current.set(model.id, controller);
-        
-        streamSentenceCompletion(model, context, {
-          onChunk: (fullText) => {
-            if (!completionActiveRef.current) return;
-            setCompletionItems((prev) =>
-              prev.map((item) =>
-                item.modelId === model.id ? { ...item, text: fullText } : item
-              )
-            );
-          },
-          onUsage: (usage) => {
-            accumulateCost(model.id, usage.cost || 0, usage.total_tokens || 0);
-          },
-          onError: (error) => {
-            if (!completionActiveRef.current) return;
-            setCompletionItems((prev) =>
-              prev.map((item) =>
-                item.modelId === model.id
-                  ? { ...item, isLoading: false, error }
-                  : item
-              )
-            );
-          },
-          onComplete: (finalText) => {
-            if (!completionActiveRef.current) return;
-            setCompletionItems((prev) =>
-              prev.map((item) =>
-                item.modelId === model.id
-                  ? { ...item, text: finalText, isLoading: false }
-                  : item
-              )
-            );
-            completionAbortControllers.current.delete(model.id);
-          },
-        }, controller.signal);
-      });
-    },
-    [cancelCompletions, accumulateCost]
-  );
-
+function SectionInlineEditor({
+  sectionId,
+  section,
+  isGenerating,
+  onChange,
+  onFocus,
+  focusIndex,
+  onEditorReady,
+  collapseThinkBlocks,
+}: {
+  sectionId: string;
+  section: StorySection;
+  isGenerating: boolean;
+  onChange: (content: string) => void;
+  onFocus: () => void;
+  focusIndex?: number | null;
+  onEditorReady: (sectionId: string, editor: Editor | null) => void;
+  collapseThinkBlocks: boolean;
+}) {
   const editor = useEditor({
     extensions: [
       Document,
@@ -190,201 +71,286 @@ export function StoryEditor() {
       Text,
       HardBreak,
       UndoRedo,
-      AiAuthored, // Mark for tracking AI-authored text
       Placeholder.configure({
-        placeholder: 'Start writing your story...',
+        placeholder: section.type === 'assistant' ? 'Assistant response appears here…' : `Write ${section.type} content…`,
       }),
-      StoryDecorations,
+      StoryDecorations.configure({
+        collapseThinkBlocks,
+      }),
     ],
-    content: getEditorContent(),
+    content: textToHtml(section.content),
     editable: !isGenerating,
-    onSelectionUpdate: ({ editor }) => {
-      // Dismiss completion popup when cursor moves
-      if (completionActiveRef.current) {
-        cancelCompletions();
-      }
-      // Check if the cursor is in AI-authored text by checking marks at position
-      const { from } = editor.state.selection;
-      const $pos = editor.state.doc.resolve(from);
-      
-      // Check marks at cursor position
-      const marks = $pos.marks();
-      const aiMark = marks.find(m => m.type.name === 'aiAuthored');
-      
-      if (aiMark) {
-        setCursorAuthor({ 
-          author: 'ai', 
-          modelId: aiMark.attrs.modelId 
-        });
-      } else {
-        setCursorAuthor({ author: 'user' });
-      }
-    },
+    onFocus,
     onUpdate: ({ editor }) => {
-      if (isUpdatingRef.current) return;
-      
-      const htmlContent = editor.getHTML();
-      const plainText = editor.getText({ blockSeparator: '\n\n' });
-      
-      if (selectedStory && htmlContent !== lastSavedHtmlRef.current) {
-        // Schedule auto-save
-        if (autoSaveTimerRef.current) {
-          clearTimeout(autoSaveTimerRef.current);
-        }
-        
-        autoSaveTimerRef.current = setTimeout(() => {
-          updateStory(selectedStory.id, {
-            content: plainText,
-            htmlContent: htmlContent,
-          });
-          lastSavedHtmlRef.current = htmlContent;
-        }, 1000); // Auto-save after 1 second of inactivity
-        
-        // Update the ref immediately to track changes
-        lastSavedHtmlRef.current = htmlContent;
-      }
+      onChange(editor.getText({ blockSeparator: '\n\n' }));
     },
   });
-  
-  // Keep editor ref in sync
-  editorRef.current = editor;
-  
-  // Update editor content when story changes
-  useEffect(() => {
-    if (editor && selectedStory) {
-      const targetContent = getEditorContent();
-      const currentContent = editor.getHTML();
-      
-      // Only update if content is different
-      if (currentContent !== targetContent) {
-        isUpdatingRef.current = true;
-        editor.commands.setContent(targetContent);
-        lastSavedHtmlRef.current = targetContent;
-        isUpdatingRef.current = false;
-      }
-    }
-  }, [editor, selectedStory?.id, selectedStory?.htmlContent, getEditorContent]);
-  
-  // Update editable state when generating
-  useEffect(() => {
-    if (editor) {
-      editor.setEditable(!isGenerating);
-    }
-  }, [editor, isGenerating]);
-  
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-      cancelCompletions();
-    };
-  }, [cancelCompletions]);
-  
-  // Cancel completions when story changes
-  useEffect(() => {
-    cancelCompletions();
-  }, [selectedStoryId, cancelCompletions]);
-  
-  // Keyboard handler for completion popup + Tab trigger
-  // Registered on editor.view.dom in CAPTURE phase so it fires BEFORE
-  // ProseMirror's own handler. stopImmediatePropagation prevents PM from
-  // ever seeing consumed keys (PM's captureKeyDown swallows Escape/arrows).
+
   useEffect(() => {
     if (!editor) return;
-    
-    const handleEditorKeyDown = (e: KeyboardEvent) => {
-      // When completion popup is active, Enter accepts the selected completion
-      if (completionActiveRef.current) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          acceptCompletionRef.current(completionSelectedIndexRef.current);
-          return;
-        }
-        // Tab cycles through completions instead of triggering new ones
-        if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          setCompletionSelectedIndex((prev) =>
-            prev < completionItemsRef.current.length - 1 ? prev + 1 : 0
-          );
-          return;
-        }
-        if (e.key === 'Tab' && e.shiftKey) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          setCompletionSelectedIndex((prev) =>
-            prev > 0 ? prev - 1 : completionItemsRef.current.length - 1
-          );
-          return;
-        }
-      }
-      
-      // Tab triggers completion (only when popup is not active)
-      if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (isGenerating) return;
-      
-      const enabledModels = getEnabledModels();
-      if (enabledModels.length === 0) return;
-      
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      
-      // Get text before cursor using ProseMirror's textBetween for accurate mapping
-      const { from } = editor.state.selection;
-      const textBeforeCursor = editor.state.doc.textBetween(0, from, '\n\n');
-      
-      // Get context (last N chars)
-      const defaultContextLen = 1000;
-      const contextLength = enabledModels[0]?.contextLength || defaultContextLen;
-      const context = textBeforeCursor.slice(-contextLength);
-      
-      if (!context.trim()) return; // No content to complete from
-      
-      // Get cursor screen position for popup placement  
-      const view = editor.view;
-      const coords = view.coordsAtPos(from);
-      const popupPos = {
-        top: coords.bottom + 4,
-        left: coords.left,
-      };
-      
-      // Start streaming completions
-      startCompletionStreams(enabledModels, context, popupPos);
-    };
+    editor.setEditable(!isGenerating);
+  }, [editor, isGenerating]);
 
-    // Click outside popup dismisses it
-    const handleMouseDown = (e: MouseEvent) => {
-      if (!completionActiveRef.current) return;
-      const popup = document.querySelector('.completion-popup');
-      if (popup && !popup.contains(e.target as Node)) {
-        cancelCompletions();
-      }
-    };
-    
-    // CAPTURE phase on editor DOM — fires before ProseMirror's bubble-phase handler
-    const editorDom = editor.view.dom;
-    editorDom.addEventListener('keydown', handleEditorKeyDown, true);
-    document.addEventListener('mousedown', handleMouseDown);
-    
+  useEffect(() => {
+    if (!editor) return;
+    const current = editor.getText({ blockSeparator: '\n\n' });
+    if (current !== section.content) {
+      editor.commands.setContent(textToHtml(section.content));
+    }
+  }, [editor, section.content]);
+
+  useEffect(() => {
+    if (!editor || focusIndex == null) return;
+    const maxPos = editor.state.doc.content.size;
+    const pos = Math.max(1, Math.min(maxPos, focusIndex + 1));
+    editor.chain().focus().setTextSelection(pos).run();
+  }, [editor, focusIndex]);
+
+  useEffect(() => {
+    onEditorReady(sectionId, editor ?? null);
     return () => {
-      editorDom.removeEventListener('keydown', handleEditorKeyDown, true);
-      document.removeEventListener('mousedown', handleMouseDown);
+      onEditorReady(sectionId, null);
     };
-  }, [editor, isGenerating, getEnabledModels, startCompletionStreams, cancelCompletions]);
-  
+  }, [editor, onEditorReady, sectionId]);
+
+  return (
+    <EditorContent
+      editor={editor}
+      className="section-inline-editor"
+    />
+  );
+}
+
+function SectionCollapsedPreview({ section }: { section: StorySection }) {
+  const firstLine = getFirstLine(section.content);
+
+  const editor = useEditor({
+    extensions: [
+      Document,
+      Paragraph,
+      Text,
+      HardBreak,
+      StoryDecorations,
+    ],
+    content: textToHtml(firstLine),
+    editable: false,
+  });
+
+  useEffect(() => {
+    if (!editor) return;
+    const current = editor.getText({ blockSeparator: '\n\n' });
+    if (current !== firstLine) {
+      editor.commands.setContent(textToHtml(firstLine));
+    }
+  }, [editor, firstLine]);
+
+  return (
+    <EditorContent
+      editor={editor}
+      className="section-inline-editor section-collapsed-markdown"
+    />
+  );
+}
+
+const roleStyles: Record<StorySection['type'], string> = {
+  system: 'border-amber-200 bg-amber-50',
+  user: 'border-blue-200 bg-blue-50',
+  assistant: 'border-emerald-200 bg-emerald-50',
+};
+
+export function StoryEditor() {
+  const { stories, updateStory } = useDataStore();
+  const { selectedStoryId, userCommandTemplate, setUserCommandTemplate } = useAppStore();
+  const { isGenerating } = useGenerationStore();
+
+  const selectedStory = stories.find((s) => s.id === selectedStoryId);
+
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState('');
+  const [showSummariesEditor, setShowSummariesEditor] = useState(false);
+  const [summariesDraft, setSummariesDraft] = useState('');
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [pendingCaret, setPendingCaret] = useState<{ sectionId: string; index: number } | null>(null);
+  const [pendingRemoveSectionId, setPendingRemoveSectionId] = useState<string | null>(null);
+  const [expandedThinkSectionIds, setExpandedThinkSectionIds] = useState<Set<string>>(new Set());
+  const [historyTick, setHistoryTick] = useState(0);
+  const sectionEditorsRef = useRef<Map<string, Editor>>(new Map());
+
+  const completionModels = useCompletionModelStore((s) => s.models);
+  const totalCompletionCost = completionModels.reduce((sum, m) => sum + m.totalCost, 0);
+  const totalCompletionTokens = completionModels.reduce((sum, m) => sum + m.totalTokens, 0);
+
+  const sections = useMemo(() => selectedStory?.sections || [], [selectedStory?.sections]);
+
+  const commitSections = (nextSections: StorySection[]) => {
+    if (!selectedStory) return;
+    updateStory(selectedStory.id, {
+      sections: nextSections,
+      content: deriveFlatStoryContent(nextSections),
+      htmlContent: '',
+    });
+  };
+
+
+  const updateSection = (sectionId: string, updates: Partial<StorySection>) => {
+    if (!selectedStory) return;
+    const nextSections = sections.map((section) =>
+      section.id === sectionId ? { ...section, ...updates } : section
+    );
+    commitSections(nextSections);
+  };
+
+  const canRemoveSection = (section: StorySection) => {
+    if (section.type === 'system') return false;
+
+    if (section.type === 'user') {
+      const userCount = sections.filter((s) => s.type === 'user').length;
+      return userCount > 1;
+    }
+
+    if (section.type === 'assistant') {
+      const assistantCount = sections.filter((s) => s.type === 'assistant').length;
+      return assistantCount > 1;
+    }
+
+    return false;
+  };
+
+  const removeSection = (sectionId: string) => {
+    if (!selectedStory) return;
+
+    const target = sections.find((section) => section.id === sectionId);
+    if (!target || !canRemoveSection(target)) return;
+
+    const nextSections = sections.filter((section) => section.id !== sectionId);
+    commitSections(nextSections);
+
+    if (activeSectionId === sectionId) {
+      setActiveSectionId(null);
+    }
+    if (pendingCaret?.sectionId === sectionId) {
+      setPendingCaret(null);
+    }
+    if (pendingRemoveSectionId === sectionId) {
+      setPendingRemoveSectionId(null);
+    }
+    if (expandedThinkSectionIds.has(sectionId)) {
+      setExpandedThinkSectionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sectionId);
+        return next;
+      });
+    }
+  };
+
+  const toggleThinkCollapsed = (sectionId: string) => {
+    setExpandedThinkSectionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+  };
+
+  const findInsertAnchorIndex = (afterSectionId?: string): number => {
+    if (sections.length === 0) return -1;
+
+    const requestedIndex = afterSectionId ? sections.findIndex((section) => section.id === afterSectionId) : -1;
+    const startIndex = requestedIndex >= 0 ? requestedIndex : sections.length - 1;
+
+    for (let index = startIndex; index >= 0; index -= 1) {
+      if (sections[index].type === 'assistant') return index;
+    }
+
+    return sections.length - 1;
+  };
+
+  const insertUserTurn = (defaultText = '', afterSectionId?: string) => {
+    if (!selectedStory) return;
+
+    const anchorIndex = findInsertAnchorIndex(afterSectionId || activeSectionId || undefined);
+    const userSection = createSection('user', defaultText);
+    const assistantSection = createSection('assistant', '');
+
+    const nextSections = [...sections];
+    nextSections.splice(anchorIndex + 1, 0, userSection, assistantSection);
+    commitSections(nextSections);
+
+    setActiveSectionId(userSection.id);
+    return userSection.id;
+  };
+
+  const resolveTemplate = () => {
+    if (!selectedStory) return null;
+
+    const cursorMarker = '{cursor}';
+    const chapterNum = selectedStory.chapterNumber ?? 1;
+    const summaries = (selectedStory.chapterSummaries ?? '').split(/\r?\n/);
+
+    let resolved = userCommandTemplate.replace(/\{\{\s*n\s*\}\}/g, chapterNum.toString());
+
+    resolved = resolved.replace(/\{\{\s*(-?\d+)\s*\}\}/g, (_, match) => {
+      const targetNum = chapterNum + parseInt(match, 10);
+      const idx = targetNum - 1;
+      return idx >= 0 && idx < summaries.length ? summaries[idx] : `[Missing Summary ${targetNum}]`;
+    });
+
+    resolved = resolved.replace(/\\n/g, '\n');
+
+    const cursorIndex = resolved.indexOf(cursorMarker);
+    const text = resolved.replace(cursorMarker, '');
+
+    return { text, cursorIndex: cursorIndex >= 0 ? cursorIndex : text.length, chapterNum };
+  };
+
+  useEffect(() => {
+    if (!pendingCaret) return;
+    const sectionStillExists = sections.some((section) => section.id === pendingCaret.sectionId);
+    if (!sectionStillExists) {
+      setPendingCaret(null);
+    }
+  }, [pendingCaret, sections]);
+
+  useEffect(() => {
+    if (!pendingRemoveSectionId) return;
+    const stillExists = sections.some((section) => section.id === pendingRemoveSectionId);
+    if (!stillExists) {
+      setPendingRemoveSectionId(null);
+    }
+  }, [pendingRemoveSectionId, sections]);
+
+  const handleEditorReady = (sectionId: string, editor: Editor | null) => {
+    if (editor) {
+      sectionEditorsRef.current.set(sectionId, editor);
+    } else {
+      sectionEditorsRef.current.delete(sectionId);
+    }
+    setHistoryTick((t) => t + 1);
+  };
+
+  const activeEditor = useMemo(() => {
+    if (activeSectionId) {
+      const byActive = sectionEditorsRef.current.get(activeSectionId);
+      if (byActive) return byActive;
+    }
+    for (const section of sections) {
+      const editor = sectionEditorsRef.current.get(section.id);
+      if (editor) return editor;
+    }
+    return null;
+  }, [activeSectionId, sections, historyTick]);
+
+  const canUndo = !!activeEditor?.can().undo();
+  const canRedo = !!activeEditor?.can().redo();
+
   if (!selectedStory) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center text-gray-400">
-          <svg
-            className="w-16 h-16 mx-auto mb-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
+          <svg className="w-16 h-16 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -393,37 +359,25 @@ export function StoryEditor() {
             />
           </svg>
           <p className="text-lg">Select a story to start writing</p>
-          <p className="text-sm mt-2">
-            Or create a new one using the sidebar
-          </p>
+          <p className="text-sm mt-2">Or create a new one using the sidebar</p>
         </div>
       </div>
     );
   }
-  
-  // Get model name from ID
-  const getModelName = (modelId?: string) => {
-    if (!modelId) return 'Unknown Model';
-    const model = models.find(m => m.modelId === modelId);
-    return model?.name || modelId;
-  };
-  
-  // Compute total completion cost across all models
-  const completionModels = useCompletionModelStore((s) => s.models);
-  const totalCompletionCost = completionModels.reduce((sum, m) => sum + m.totalCost, 0);
-  const totalCompletionTokens = completionModels.reduce((sum, m) => sum + m.totalTokens, 0);
-  
+
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
-      {/* Story Title */}
       <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-gray-800">{selectedStory.name}</h1>
-          {/* Undo/Redo buttons */}
           <div className="flex items-center gap-1 ml-2">
             <button
-              onClick={() => editor?.chain().focus().undo().run()}
-              disabled={!editor?.can().undo()}
+              onClick={() => {
+                if (!activeEditor) return;
+                activeEditor.chain().focus().undo().run();
+                setHistoryTick((t) => t + 1);
+              }}
+              disabled={!canUndo || isGenerating}
               className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Undo (Ctrl+Z)"
             >
@@ -432,8 +386,12 @@ export function StoryEditor() {
               </svg>
             </button>
             <button
-              onClick={() => editor?.chain().focus().redo().run()}
-              disabled={!editor?.can().redo()}
+              onClick={() => {
+                if (!activeEditor) return;
+                activeEditor.chain().focus().redo().run();
+                setHistoryTick((t) => t + 1);
+              }}
+              disabled={!canRedo || isGenerating}
               className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               title="Redo (Ctrl+Y)"
             >
@@ -442,14 +400,14 @@ export function StoryEditor() {
               </svg>
             </button>
             <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
-              <input 
+              <input
                 type="number"
                 min="1"
                 className="w-12 h-6 px-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 value={selectedStory.chapterNumber ?? 1}
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
-                  if (!isNaN(val)) {
+                  if (!Number.isNaN(val)) {
                     updateStory(selectedStory.id, { chapterNumber: val });
                   }
                 }}
@@ -470,44 +428,27 @@ export function StoryEditor() {
             </div>
             <button
               onClick={() => {
-                if (!editor) return;
-                const template = userCommandTemplate;
-                const cursorMarker = '{cursor}';
-                const chapterNum = selectedStory.chapterNumber ?? 1;
-                const summaries = (selectedStory.chapterSummaries ?? '').split(/\r?\n/);
-
-                let resolved = template.replace(/\{\{\s*n\s*\}\}/g, chapterNum.toString());
-
-                resolved = resolved.replace(/\{\{\s*(-?\d+)\s*\}\}/g, (_, match) => {
-                  const targetNum = chapterNum + parseInt(match, 10);
-                  const idx = targetNum - 1; // 1-based index to 0-based array index
-                  return (idx >= 0 && idx < summaries.length) ? summaries[idx] : `[Missing Summary ${targetNum}]`;
-                });
-
-                // Replace literal \n with actual newlines
-                resolved = resolved.replace(/\\n/g, '\n');
-                
-                const resolvedCursorIdx = resolved.indexOf(cursorMarker) >= 0 ? resolved.indexOf(cursorMarker) : -1;
-                if (resolvedCursorIdx >= 0) {
-                  const before = resolved.slice(0, resolvedCursorIdx);
-                  const after = resolved.slice(resolvedCursorIdx + cursorMarker.length);
-                  editor.chain().focus().insertContent(before + after).run();
-                  const { to } = editor.state.selection;
-                  const newPos = to - after.length;
-                  editor.commands.setTextSelection(newPos);
-                } else {
-                  editor.chain().focus().insertContent(resolved).run();
+                const resolved = resolveTemplate();
+                if (!resolved) return;
+                const newSectionId = insertUserTurn(resolved.text);
+                if (newSectionId) {
+                  setPendingCaret({ sectionId: newSectionId, index: resolved.cursorIndex });
                 }
-
-                // Increment chapter number automatically
-                updateStory(selectedStory.id, { chapterNumber: chapterNum + 1 });
+                updateStory(selectedStory.id, { chapterNumber: resolved.chapterNum + 1 });
               }}
-              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Insert user command"
+              className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Insert user section from template"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
+            </button>
+            <button
+              onClick={() => insertUserTurn('')}
+              className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
+              title="Create new user section + following assistant section"
+            >
+              New User Turn
             </button>
             <button
               onClick={() => {
@@ -527,95 +468,185 @@ export function StoryEditor() {
         {isGenerating && (
           <span className="text-sm text-blue-600 flex items-center gap-2">
             <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-                fill="none"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
             Generating...
           </span>
         )}
       </div>
-      
-      {/* Editor */}
+
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-4">
-          <EditorContent
-            editor={editor}
-            className="story-editor prose prose-lg max-w-none"
-          />
+        <div className="max-w-4xl mx-auto px-6 py-4 space-y-3">
+          {sections.map((section) => (
+            <div
+              key={section.id}
+              id={section.type === 'assistant' ? `assistant-section-${section.id}` : undefined}
+              className={`rounded-lg border ${roleStyles[section.type]}`}
+            >
+              {(() => {
+                const collapsible = isCollapsibleSection(section.content);
+                const effectiveCollapsed = collapsible && section.collapsed;
+                const hasThinkSubsection = section.type === 'assistant';
+                const thinkCollapsed = hasThinkSubsection && !expandedThinkSectionIds.has(section.id);
+
+                return (
+                  <>
+              <div className="px-3 py-2 flex items-center justify-between border-b border-black/10">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">{section.type}</span>
+                <div className="flex items-center gap-2">
+                  {collapsible && (
+                    <button
+                      onClick={() => updateSection(section.id, { collapsed: !section.collapsed })}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white/70 px-2 py-1 text-xs text-gray-700 hover:bg-white"
+                      title={effectiveCollapsed ? 'Expand section' : 'Collapse section'}
+                    >
+                      <svg className={`h-3.5 w-3.5 transition-transform ${effectiveCollapsed ? '' : 'rotate-180'}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.94a.75.75 0 011.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                      </svg>
+                      {effectiveCollapsed ? 'Expand' : 'Collapse'}
+                    </button>
+                  )}
+
+                  {collapsible && <div className="mx-1 h-4 w-px bg-black/10" />}
+
+                  {pendingRemoveSectionId === section.id ? (
+                    <>
+                      <button
+                        onClick={() => removeSection(section.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        disabled={!canRemoveSection(section) || isGenerating}
+                        title="Confirm remove section"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                          <path fillRule="evenodd" d="M16.704 5.29a1 1 0 010 1.42l-7.996 8a1 1 0 01-1.415 0L3.296 10.71a1 1 0 011.415-1.42L8 12.586l7.289-7.296a1 1 0 011.415 0z" clipRule="evenodd" />
+                        </svg>
+                        Confirm
+                      </button>
+                      <button
+                        onClick={() => setPendingRemoveSectionId(null)}
+                        className="inline-flex items-center rounded-md border border-black/10 bg-white/70 px-2 py-1 text-xs text-gray-600 hover:bg-white"
+                        title="Cancel remove"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setPendingRemoveSectionId(section.id)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white/70 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white/70"
+                      disabled={!canRemoveSection(section) || isGenerating}
+                      title={canRemoveSection(section) ? 'Remove section' : 'Cannot remove the last section of this type'}
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fillRule="evenodd" d="M8.257 3.099c.366-.446.92-.707 1.5-.707h.486c.58 0 1.134.261 1.5.707l.633.773h2.624a.75.75 0 010 1.5h-.73l-.565 9.03a2 2 0 01-1.997 1.875H8.292a2 2 0 01-1.997-1.875l-.565-9.03H5a.75.75 0 010-1.5h2.624l.633-.773zM9 8.25a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5zm3 0a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5z" clipRule="evenodd" />
+                      </svg>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {effectiveCollapsed ? (
+                <div className="px-3 py-2">
+                  <SectionCollapsedPreview section={section} />
+                </div>
+              ) : (
+                <div className="px-3 py-2">
+                  {section.type === 'assistant' && (
+                    <div className="mb-3 rounded-md border border-violet-200 bg-violet-50/50">
+                      <div className="px-3 py-2 flex items-center justify-between border-b border-violet-200/70">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Thinking</span>
+                        <button
+                          onClick={() => toggleThinkCollapsed(section.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white/80 px-2 py-0.5 text-[11px] text-violet-700 hover:bg-white"
+                          title={thinkCollapsed ? 'Expand thinking subsection' : 'Collapse thinking subsection'}
+                        >
+                          {thinkCollapsed ? 'Expand' : 'Collapse'}
+                        </button>
+                      </div>
+
+                      {thinkCollapsed ? (
+                        <div className="h-1" aria-hidden="true" />
+                      ) : (
+                        <div className="px-3 py-2">
+                          <SectionInlineEditor
+                            sectionId={`${section.id}:think`}
+                            section={{
+                              ...section,
+                              content: section.thinkingContent || '',
+                            }}
+                            isGenerating={isGenerating}
+                            onFocus={() => {
+                              setActiveSectionId(section.id);
+                              setHistoryTick((t) => t + 1);
+                            }}
+                            onChange={(content) => updateSection(section.id, { thinkingContent: content })}
+                            onEditorReady={handleEditorReady}
+                            collapseThinkBlocks={false}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <SectionInlineEditor
+                    sectionId={section.id}
+                    section={section}
+                    isGenerating={isGenerating}
+                    onFocus={() => {
+                      setActiveSectionId(section.id);
+                      setHistoryTick((t) => t + 1);
+                      if (pendingCaret?.sectionId === section.id) {
+                        setPendingCaret(null);
+                      }
+                    }}
+                    onChange={(content) => updateSection(section.id, { content })}
+                    focusIndex={pendingCaret?.sectionId === section.id ? pendingCaret.index : null}
+                    onEditorReady={handleEditorReady}
+                    collapseThinkBlocks={false}
+                  />
+                </div>
+              )}
+                  </>
+                );
+              })()}
+            </div>
+          ))}
         </div>
       </div>
-      
-      {/* Sentence Completion Popup */}
-      <CompletionPopup
-        items={completionItems}
-        position={completionPosition}
-        selectedIndex={completionSelectedIndex}
-        onSelect={acceptCompletion}
-        onCancel={cancelCompletions}
-        visible={completionVisible}
-      />
-      
-      {/* Authorship Footer */}
+
       <div className="px-6 py-2 border-t border-gray-200 bg-gray-50 text-xs text-gray-600 flex items-center justify-between">
         <div>
-          {cursorAuthor.author === 'ai' ? (
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-              Generated by {getModelName(cursorAuthor.modelId)}
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-gray-400"></span>
-              Written by you
-            </span>
-          )}
+          <span className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+            Structured story sections enabled
+          </span>
         </div>
         <div className="flex items-center gap-3">
           {totalCompletionCost > 0 && (
             <span className="text-gray-400 font-mono" title="Sentence completion cost (all models)">
-              ✎{' '}
-              {totalCompletionCost < 0.1
-                ? `${(totalCompletionCost * 100).toFixed(3)}¢`
-                : `$${totalCompletionCost.toFixed(3)}`}
-              {' '}({totalCompletionTokens.toLocaleString()} tok)
+              ✎ {totalCompletionCost < 0.1 ? `${(totalCompletionCost * 100).toFixed(3)}¢` : `$${totalCompletionCost.toFixed(3)}`} ({totalCompletionTokens.toLocaleString()} tok)
             </span>
           )}
-          {" | "}
+          {' | '}
           {(selectedStory.totalCost > 0 || selectedStory.totalTokens > 0) && (
             <div className="text-gray-400 font-mono" title="Accumulated generation cost and tokens for this story">
-              {selectedStory.totalTokens.toLocaleString()} tokens | 
+              {selectedStory.totalTokens.toLocaleString()} tokens |
               {selectedStory.totalCost > 0 && (
-                <span className="ml-2">
-                  {selectedStory.totalCost < 0.1 
-                    ? `${(selectedStory.totalCost * 100).toFixed(3)}¢`
-                    : `$${selectedStory.totalCost.toFixed(3)}`}
-                </span>
+                <span className="ml-2">{selectedStory.totalCost < 0.1 ? `${(selectedStory.totalCost * 100).toFixed(3)}¢` : `$${selectedStory.totalCost.toFixed(3)}`}</span>
               )}
             </div>
           )}
         </div>
       </div>
-      
-      {/* User Command Template Editor */}
+
       {showTemplateEditor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowTemplateEditor(false)}>
           <div className="bg-white rounded-lg shadow-xl w-[480px] p-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-semibold text-gray-700 mb-2">User Command Template</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Use <code className="bg-gray-100 px-1 rounded">{'{cursor}'}</code> to mark where the cursor should be placed.
-              Use <code className="bg-gray-100 px-1 rounded">\n</code> for newlines.
+              Use <code className="bg-gray-100 px-1 rounded">{'{cursor}'}</code> to mark where cursor should land. Use <code className="bg-gray-100 px-1 rounded">\n</code> for newlines.
             </p>
             <textarea
               value={templateDraft}
@@ -624,19 +655,11 @@ export function StoryEditor() {
               spellCheck={false}
             />
             <div className="flex justify-between items-center mt-3">
-              <button
-                onClick={() => {
-                  setTemplateDraft('<<end_ai>><<start_user>>{cursor}<<end_user>><<start_ai>><think>\\n...\\n</think>\\n');
-                }}
-                className="text-xs text-gray-500 hover:text-gray-700 underline"
-              >
+              <button onClick={() => setTemplateDraft('{cursor}')} className="text-xs text-gray-500 hover:text-gray-700 underline">
                 Reset to default
               </button>
               <div className="flex gap-2">
-                <button
-                  onClick={() => setShowTemplateEditor(false)}
-                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md"
-                >
+                <button onClick={() => setShowTemplateEditor(false)} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">
                   Cancel
                 </button>
                 <button
@@ -654,56 +677,21 @@ export function StoryEditor() {
         </div>
       )}
 
-      {/* Chapter Summaries Editor */}
       {showSummariesEditor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSummariesEditor(false)}>
           <div className="bg-white rounded-lg shadow-xl w-[800px] p-4 flex flex-col h-[70vh] max-h-[800px]" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-800 mb-2">Chapter Summaries</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Enter one summary per line. The first line is Chapter 1, the second is Chapter 2, etc. Use <code className="bg-gray-100 px-1 rounded">{'{{n}}'}</code> in the User Command Template to inject summaries relative to the current chapter.
+              Enter one summary per line. The first line is Chapter 1, the second is Chapter 2, etc. Use <code className="bg-gray-100 px-1 rounded">{'{{n}}'}</code> in the User Command Template.
             </p>
-            <div className="flex-1 min-h-0 relative border border-gray-300 rounded-md group focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500 bg-white shadow-sm overflow-hidden">
-              {/* Left Gutter Background */}
-              <div aria-hidden="true" className="absolute top-0 left-0 bottom-0 w-12 bg-gray-50 border-r border-gray-200 pointer-events-none z-0" />
-              
-              {/* Invisible Mirror for sync layout */}
-              <div 
-                ref={summariesMirrorRef}
-                aria-hidden="true" 
-                className="absolute inset-0 z-10 overflow-y-auto pointer-events-none text-transparent font-mono text-sm leading-6 py-3 whitespace-pre-wrap break-words pr-3"
-                style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-              >
-                <div className="flex flex-col w-full">
-                  {(summariesDraft || '').split('\n').map((line, i) => (
-                    <div key={i} className="flex min-w-0">
-                      <div className="w-12 flex-shrink-0 text-right pr-3 text-gray-400 select-none">
-                        {i + 1}
-                      </div>
-                      <div className="flex-1 min-w-0 break-words pl-3">
-                        {line || '\u200B'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
-              <textarea
-                value={summariesDraft}
-                onChange={(e) => setSummariesDraft(e.target.value)}
-                className="relative z-20 w-full h-full py-3 pl-[3.75rem] pr-3 text-sm font-mono focus:outline-none resize-none leading-6 bg-transparent text-gray-700 whitespace-pre-wrap break-words"
-                spellCheck={false}
-                onScroll={(e) => {
-                  if (summariesMirrorRef.current) {
-                    summariesMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
-                  }
-                }}
-              />
-            </div>
+            <textarea
+              value={summariesDraft}
+              onChange={(e) => setSummariesDraft(e.target.value)}
+              className="w-full flex-1 px-3 py-2 text-sm font-mono border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              spellCheck={false}
+            />
             <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setShowSummariesEditor(false)}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md"
-              >
+              <button onClick={() => setShowSummariesEditor(false)} className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-md">
                 Cancel
               </button>
               <button

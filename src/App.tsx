@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { LeftSidebar } from './components/sidebar/LeftSidebar';
+import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
@@ -7,6 +8,7 @@ import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } fro
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [leftSidebarView, setLeftSidebarView] = useState<'library' | 'contents'>('library');
   
   // The initialized states are tracked internally by the stores
   
@@ -72,9 +74,24 @@ function App() {
   }
   
   return (
-    <div className="h-screen flex overflow-hidden bg-white">
-      {/* Left Sidebar - Navigation */}
-      <LeftSidebar />
+    <div className="h-screen flex overflow-hidden bg-white relative">
+      <div className="absolute left-2 top-2 z-20 inline-flex rounded-md border border-gray-200 bg-white/95 p-0.5 shadow-sm">
+        <button
+          onClick={() => setLeftSidebarView('library')}
+          className={`px-2 py-1 text-xs rounded ${leftSidebarView === 'library' ? 'bg-gray-200 text-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          Library
+        </button>
+        <button
+          onClick={() => setLeftSidebarView('contents')}
+          className={`px-2 py-1 text-xs rounded ${leftSidebarView === 'contents' ? 'bg-gray-200 text-gray-800' : 'text-gray-600 hover:bg-gray-100'}`}
+        >
+          Contents
+        </button>
+      </div>
+
+      {/* Left Sidebar */}
+      {leftSidebarView === 'library' ? <LeftSidebar /> : <ContentsSidebar />}
       
       {/* Main Editor Area */}
       <StoryEditor />

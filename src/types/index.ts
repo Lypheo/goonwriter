@@ -19,6 +19,7 @@ export interface Story {
   id: string;
   collectionId: string;
   name: string;
+  sections: StorySection[];
   content: string; // Plain text content (for display/export)
   htmlContent: string; // HTML with authorship marks (source of truth)
   totalCost: number; // Accumulated generation cost in USD
@@ -27,6 +28,14 @@ export interface Story {
   chapterNumber?: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface StorySection {
+  id: string;
+  type: 'system' | 'user' | 'assistant';
+  content: string;
+  thinkingContent?: string;
+  collapsed?: boolean;
 }
 
 // Legacy interface - kept for migration

@@ -3,6 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
 import { fetchData, saveData } from '../services/apiService';
+import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
 
 interface DataState {
   groups: Group[];
@@ -26,7 +27,7 @@ interface DataState {
   
   // Story CRUD
   createStory: (collectionId: string, name: string) => Story;
-  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens' | 'chapterSummaries' | 'chapterNumber'>>) => void;
+  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens' | 'chapterSummaries' | 'chapterNumber'>>) => void;
   deleteStory: (id: string) => void;
   duplicateStory: (id: string) => Story | null;
   
@@ -82,13 +83,17 @@ export const useDataStore = create<DataState>()(
             fetchData<Story[]>('stories'),
           ]);
           
+          const normalizedStories = (stories || []).map((story) => normalizeStory(story));
+
           set({
             groups: groups || [],
             collections: collections || [],
-            stories: stories || [],
+            stories: normalizedStories,
             isLoading: false,
             isInitialized: true,
           });
+
+          debouncedSaveStories(normalizedStories);
         } catch (error) {
           console.error('Failed to initialize data:', error);
           set({ isLoading: false, isInitialized: true });
@@ -187,12 +192,14 @@ export const useDataStore = create<DataState>()(
       // Story CRUD
       createStory: (collectionId: string, name: string) => {
         const now = Date.now();
+        const sections = createInitialSections();
         const story: Story = {
           id: uuidv4(),
           collectionId,
           name,
-          content: '',
-          htmlContent: '<p></p>',
+          sections,
+          content: deriveFlatStoryContent(sections),
+          htmlContent: '',
           totalCost: 0,
           totalTokens: 0,
           createdAt: now,
@@ -206,10 +213,22 @@ export const useDataStore = create<DataState>()(
         return story;
       },
       
-      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens' | 'chapterSummaries' | 'chapterNumber'>>) => {
+      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens' | 'chapterSummaries' | 'chapterNumber'>>) => {
         set((state) => {
           const newStories = state.stories.map((s) =>
-            s.id === id ? { ...s, ...updates, updatedAt: Date.now() } : s
+            s.id === id
+              ? {
+                  ...s,
+                  ...updates,
+                  ...(updates.sections
+                    ? {
+                        content: updates.content ?? deriveFlatStoryContent(updates.sections),
+                        htmlContent: updates.htmlContent ?? '',
+                      }
+                    : {}),
+                  updatedAt: Date.now(),
+                }
+              : s
           );
           debouncedSaveStories(newStories);
           return { stories: newStories };
@@ -229,11 +248,17 @@ export const useDataStore = create<DataState>()(
         if (!story) return null;
         
         const now = Date.now();
+        const duplicatedSections = story.sections?.map((section) => ({
+          ...section,
+          id: uuidv4(),
+        })) || createInitialSections();
         const duplicated: Story = {
           ...story,
           id: uuidv4(),
           name: `${story.name} (copy)`,
-          htmlContent: story.htmlContent || '',
+          sections: duplicatedSections,
+          content: deriveFlatStoryContent(duplicatedSections),
+          htmlContent: '',
           totalCost: 0, // Reset cost for duplicated story
           totalTokens: 0,
           createdAt: now,
@@ -278,7 +303,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   selectedGroupId: null,
   selectedCollectionId: null,
   selectedStoryId: null,
-  userCommandTemplate: '<<end_ai>><<start_user>>{cursor}<<end_user>><<start_ai>><think>\n...\n</think>\n',
+  userCommandTemplate: '{cursor}',
   isAppStateInitialized: false,
   
   initializeAppState: async () => {

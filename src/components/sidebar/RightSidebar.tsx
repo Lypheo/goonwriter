@@ -1,21 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
-import { streamCompletion, streamChatCompletion, parseTextToChatMessages } from '../../services/llmService';
+import { streamCompletion, streamChatCompletion } from '../../services/llmService';
+import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
 import { Button, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
 import { ResponseMetadata } from './ResponseMetadata';
-
-// Escape HTML entities
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/\n/g, '<br>');
-}
+import type { StorySection } from '../../types';
 
 const SettingsIcon = () => (
   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -62,7 +54,6 @@ export function RightSidebar() {
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
   
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
@@ -70,80 +61,121 @@ export function RightSidebar() {
   
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
+
+  const parseStreamedAssistantContent = (
+    rawChunk: string,
+    state: { inThink: boolean; buffer: string }
+  ): { responsePart: string; thinkingPart: string } => {
+    state.buffer += rawChunk;
+    let responsePart = '';
+    let thinkingPart = '';
+
+    while (state.buffer.length > 0) {
+      if (state.inThink) {
+        const endIdx = state.buffer.indexOf('</think>');
+        if (endIdx === -1) {
+          thinkingPart += state.buffer;
+          state.buffer = '';
+          break;
+        }
+        thinkingPart += state.buffer.slice(0, endIdx);
+        state.buffer = state.buffer.slice(endIdx + '</think>'.length);
+        state.inThink = false;
+        continue;
+      }
+
+      const startIdx = state.buffer.indexOf('<think>');
+      if (startIdx === -1) {
+        responsePart += state.buffer;
+        state.buffer = '';
+        break;
+      }
+
+      responsePart += state.buffer.slice(0, startIdx);
+      state.buffer = state.buffer.slice(startIdx + '<think>'.length);
+      state.inThink = true;
+    }
+
+    return { responsePart, thinkingPart };
+  };
+
+  const ensureAssistantTail = (inputSections: StorySection[]): { sections: StorySection[]; assistantIndex: number } => {
+    const next = inputSections.map((section) => ({ ...section }));
+    const lastIndex = next.length - 1;
+
+    if (lastIndex < 0) {
+      next.push(
+        { id: crypto.randomUUID(), type: 'system', content: '', thinkingContent: '', collapsed: false },
+        { id: crypto.randomUUID(), type: 'user', content: '', thinkingContent: '', collapsed: false },
+        { id: crypto.randomUUID(), type: 'assistant', content: '', thinkingContent: '', collapsed: false }
+      );
+      return { sections: next, assistantIndex: 2 };
+    }
+
+    if (next[lastIndex].type === 'assistant') {
+      return { sections: next, assistantIndex: lastIndex };
+    }
+
+    next.push({ id: crypto.randomUUID(), type: 'assistant', content: '', thinkingContent: '', collapsed: false });
+    return { sections: next, assistantIndex: next.length - 1 };
+  };
   
   const handleGenerate = useCallback(async () => {
     if (!selectedModel || !selectedStory || isGenerating) return;
-    
-    let currentContent = selectedStory.content || '';
-    let currentHtmlContent = selectedStory.htmlContent || '';
-    let prefixText = '';
-    
-    // If using chat completion, auto-insert <<start_ai>> if text ends with <<end_user>>
-    if (useChatCompletion) {
-      const trimmedContent = currentContent.trimEnd();
-      if (trimmedContent.endsWith('<<end_user>>')) {
-        prefixText = '<<start_ai>>';
-        currentContent = currentContent + prefixText;
-        // Update HTML content too
-        if (currentHtmlContent.endsWith('</p>')) {
-          currentHtmlContent = currentHtmlContent.slice(0, -4) + escapeHtml(prefixText) + '</p>';
-        } else {
-          currentHtmlContent = currentHtmlContent + escapeHtml(prefixText);
-        }
-        // Update story immediately
-        updateStory(selectedStory.id, {
-          content: currentContent,
-          htmlContent: currentHtmlContent,
-        });
-      }
-    }
-    
-    // If using chat completion, validate and parse the content
+
+    const ensured = ensureAssistantTail(selectedStory.sections || []);
+    let workingSections = ensured.sections;
+    const assistantIndex = ensured.assistantIndex;
+    const assistantBaseContent = workingSections[assistantIndex].content || '';
+    const assistantBaseThinking = workingSections[assistantIndex].thinkingContent || '';
+    const streamState = { inThink: false, buffer: '' };
+    let generatedResponse = '';
+    let generatedThinking = '';
+
+    updateStory(selectedStory.id, {
+      sections: workingSections,
+      content: deriveFlatStoryContent(workingSections),
+      htmlContent: '',
+    });
+
     let chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] | null = null;
     if (useChatCompletion) {
-      const parseResult = parseTextToChatMessages(currentContent);
-      if (parseResult.error) {
-        alert(`Cannot use chat format: ${parseResult.error}`);
+      chatMessages = storySectionsToChatMessages(workingSections);
+      if (!chatMessages.some((message) => message.role === 'user')) {
+        alert('Cannot use chat format: at least one user section with content is required.');
         return;
       }
-      chatMessages = parseResult.messages;
     }
     
     const abortController = startGeneration();
-    let generatedText = '';
     let wordCount = 0;
     const startTime = Date.now();
     
-    // Get the current HTML content as the base (may have been updated with prefix)
-    const initialHtml = currentHtmlContent || `<p>${escapeHtml(currentContent)}</p>`;
-    const baseContent = currentContent;
-    
     const callbacks = {
       onChunk: (text: string) => {
-        generatedText += text;
-        wordCount = generatedText.split(/\\s+/).filter((w) => w.length > 0).length;
+        const parsed = parseStreamedAssistantContent(text, streamState);
+        generatedResponse += parsed.responsePart;
+        generatedThinking += parsed.thinkingPart;
+
+        wordCount = `${generatedResponse} ${generatedThinking}`.split(/\s+/).filter((w) => w.length > 0).length;
         
         const elapsedSeconds = (Date.now() - startTime) / 1000;
         const wps = elapsedSeconds > 0 ? wordCount / elapsedSeconds : 0;
         
-        // Build HTML with AI-authored mark wrapping the generated text
-        // The mark will persist through all text operations
-        const escapedGenerated = escapeHtml(generatedText);
-        const aiMarkedText = `<span data-ai-authored="true" data-model-id="${selectedModel.modelId}" class="ai-authored">${escapedGenerated}</span>`;
-        
-        // Insert at end of last paragraph or create new content
-        let newHtml: string;
-        if (initialHtml.endsWith('</p>')) {
-          // Insert before the closing </p> tag
-          newHtml = initialHtml.slice(0, -4) + aiMarkedText + '</p>';
-        } else {
-          newHtml = initialHtml + aiMarkedText;
-        }
-        
-        // Update story with both plain text and HTML
+        workingSections = workingSections.map((section, index) =>
+          index === assistantIndex
+            ? {
+                ...section,
+                content: `${assistantBaseContent}${generatedResponse}`,
+                thinkingContent: `${assistantBaseThinking}${generatedThinking}`,
+              }
+            : section
+        );
+
         updateStory(selectedStory.id, {
-          content: baseContent + generatedText,
-          htmlContent: newHtml,
+          sections: workingSections,
+          content: deriveFlatStoryContent(workingSections),
+          htmlContent: '',
         });
         
         setResponseMetadata({ wordsPerSecond: wps });
@@ -164,6 +196,7 @@ export function RightSidebar() {
           const currentCost = selectedStory.totalCost || 0;
           const currentTokens = selectedStory.totalTokens || 0;
           updateStory(selectedStory.id, {
+            sections: workingSections,
             totalCost: currentCost + (chunk.usage.cost || 0),
             totalTokens: chunk.usage.total_tokens ?? currentTokens,
           });
@@ -174,6 +207,28 @@ export function RightSidebar() {
         stopGeneration();
       },
       onComplete: () => {
+        if (streamState.buffer.length > 0) {
+          if (streamState.inThink) {
+            generatedThinking += streamState.buffer;
+          } else {
+            generatedResponse += streamState.buffer;
+          }
+          streamState.buffer = '';
+          workingSections = workingSections.map((section, index) =>
+            index === assistantIndex
+              ? {
+                  ...section,
+                  content: `${assistantBaseContent}${generatedResponse}`,
+                  thinkingContent: `${assistantBaseThinking}${generatedThinking}`,
+                }
+              : section
+          );
+          updateStory(selectedStory.id, {
+            sections: workingSections,
+            content: deriveFlatStoryContent(workingSections),
+            htmlContent: '',
+          });
+        }
         stopGeneration();
       },
     };
@@ -191,7 +246,7 @@ export function RightSidebar() {
       } else {
         await streamCompletion(
           selectedModel,
-          currentContent,
+          storySectionsToGenerationPrompt(workingSections),
           samplingParams,
           callbacks,
           abortController.signal,
@@ -237,28 +292,8 @@ export function RightSidebar() {
       {/* Header */}
       <div className="p-3 border-b border-gray-200 flex items-center justify-between">
         <h2 className="font-semibold text-gray-800">LLM Controls</h2>
-        <button
-          onClick={() => setShowHelp(!showHelp)}
-          className="p-1 text-gray-500 hover:text-gray-700 rounded hover:bg-gray-100"
-          title="Help - Special Tokens"
-        >
-          <HelpIcon />
-        </button>
+        <HelpIcon />
       </div>
-      
-      {/* Help Panel */}
-      {showHelp && (
-        <div className="p-3 border-b border-gray-200 bg-blue-50 text-xs">
-          <h3 className="font-semibold text-gray-700 mb-2">Special Placeholder Tokens</h3>
-          <p className="text-gray-600 mb-2">Use these tokens in your story. They will be replaced with model-specific tags when sent to the API:</p>
-          <ul className="space-y-1 text-gray-600 font-mono text-[10px]">
-            <li><code className="bg-yellow-100 px-1 rounded">{`<<start_sys_prompt>>`}</code> / <code className="bg-yellow-100 px-1 rounded">{`<<end_sys_prompt>>`}</code></li>
-            <li><code className="bg-blue-100 px-1 rounded">{`<<start_user>>`}</code> / <code className="bg-blue-100 px-1 rounded">{`<<end_user>>`}</code></li>
-            <li><code className="bg-green-100 px-1 rounded">{`<<start_ai>>`}</code> / <code className="bg-green-100 px-1 rounded">{`<<end_ai>>`}</code></li>
-            <li><code className="bg-purple-100 px-1 rounded">{`<think>`}</code> / <code className="bg-purple-100 px-1 rounded">{`</think>`}</code></li>
-          </ul>
-        </div>
-      )}
       
       {/* Model Selection */}
       <div className="p-3 border-b border-gray-200">
@@ -323,7 +358,7 @@ export function RightSidebar() {
         </label>
         <label 
           className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
-          title="Use /chat/completions endpoint instead of /completions. Requires properly formatted chat structure with alternating user/assistant blocks."
+          title="Use /chat/completions endpoint instead of /completions. Requires at least one non-empty user section."
         >
           <input
             type="checkbox"
