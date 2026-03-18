@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
 import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
+import { createId } from '../../services/id';
 import { Button, Modal, Select, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
@@ -108,9 +109,9 @@ export function RightSidebar() {
 
     if (lastIndex < 0) {
       next.push(
-        { id: crypto.randomUUID(), type: 'system', content: '', thinkingContent: '', collapsed: false },
-        { id: crypto.randomUUID(), type: 'user', content: '', thinkingContent: '', collapsed: false },
-        { id: crypto.randomUUID(), type: 'assistant', content: '', thinkingContent: '', collapsed: false }
+        { id: createId(), type: 'system', content: '', thinkingContent: '', collapsed: false },
+        { id: createId(), type: 'user', content: '', thinkingContent: '', collapsed: false },
+        { id: createId(), type: 'assistant', content: '', thinkingContent: '', collapsed: false }
       );
       return { sections: next, assistantIndex: 2 };
     }
@@ -119,7 +120,7 @@ export function RightSidebar() {
       return { sections: next, assistantIndex: lastIndex };
     }
 
-    next.push({ id: crypto.randomUUID(), type: 'assistant', content: '', thinkingContent: '', collapsed: false });
+    next.push({ id: createId(), type: 'assistant', content: '', thinkingContent: '', collapsed: false });
     return { sections: next, assistantIndex: next.length - 1 };
   };
   

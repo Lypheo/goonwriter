@@ -11,12 +11,13 @@ import { useAppStore, useCompletionModelStore, useDataStore, useGenerationStore 
 import type { CompletionModelConfig, StorySection } from '../../types';
 import { deriveFlatStoryContent } from '../../services/storySections';
 import { streamSentenceCompletion } from '../../services/llmService';
+import { createId } from '../../services/id';
 import { CompletionPopup, type CompletionItem } from './CompletionPopup';
 import { StoryDecorations } from './extensions';
 
 function createSection(type: StorySection['type'], content = ''): StorySection {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     type,
     content,
     collapsed: false,
@@ -319,7 +320,7 @@ export function StoryEditor() {
     return sections.length - 1;
   };
 
-  const insertUserTurn = (defaultText = '', afterSectionId?: string) => {
+  const insertUserTurn = useCallback((defaultText = '', afterSectionId?: string) => {
     if (!selectedStory) return;
 
     const anchorKey = afterSectionId || activeSectionId || undefined;
@@ -333,19 +334,31 @@ export function StoryEditor() {
     commitSections(nextSections);
 
     setActiveSectionId(userSection.id);
-    return userSection.id;
-  };
+    return { userSectionId: userSection.id, assistantSectionId: assistantSection.id };
+  }, [activeSectionId, commitSections, findInsertAnchorIndex, sections, selectedStory]);
 
-  const resolveTemplate = () => {
+  const resolveTemplate = useCallback(() => {
     const cursorMarker = '{cursor}';
-    let resolved = userCommandTemplate;
+    let resolved = userCommandTemplate || cursorMarker;
     resolved = resolved.replace(/\\n/g, '\n');
 
     const cursorIndex = resolved.indexOf(cursorMarker);
     const text = resolved.replace(cursorMarker, '');
 
     return { text, cursorIndex: cursorIndex >= 0 ? cursorIndex : text.length };
-  };
+  }, [userCommandTemplate]);
+
+  const handleCreateUserTurn = useCallback(() => {
+    const resolved = resolveTemplate();
+    const inserted = insertUserTurn(resolved.text);
+    if (!inserted) return;
+
+    setPendingCaret({ sectionId: inserted.userSectionId, index: resolved.cursorIndex });
+    requestAnimationFrame(() => {
+      const sectionElement = document.querySelector(`[data-section-id="${inserted.userSectionId}"]`);
+      sectionElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, [insertUserTurn, resolveTemplate]);
 
   useEffect(() => {
     if (!pendingCaret) return;
@@ -666,13 +679,8 @@ export function StoryEditor() {
               </svg>
             </button>
             <button
-              onClick={() => {
-                const resolved = resolveTemplate();
-                const newSectionId = insertUserTurn(resolved.text);
-                if (newSectionId) {
-                  setPendingCaret({ sectionId: newSectionId, index: resolved.cursorIndex });
-                }
-              }}
+              type="button"
+              onClick={handleCreateUserTurn}
               className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
               title="Create new user section + following assistant section from template"
             >
@@ -718,6 +726,7 @@ export function StoryEditor() {
             <div
               key={section.id}
               id={section.type === 'assistant' ? `assistant-section-${section.id}` : undefined}
+              data-section-id={section.id}
               className={`rounded-lg border ${roleStyles[section.type]}`}
             >
               {(() => {

@@ -2,61 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore, useDataStore } from '../../stores';
 import { Button } from '../ui/common';
 
-function measureWrappedRows(line: string, maxWidth: number, font: string): number {
-  if (maxWidth <= 0) return 1;
-  if (!line) return 1;
-
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return 1;
-  ctx.font = font;
-
-  const parts = line.split(/(\s+)/).filter((part) => part.length > 0);
-  let rows = 1;
-  let current = '';
-
-  for (const part of parts) {
-    const next = current + part;
-    if (ctx.measureText(next).width <= maxWidth) {
-      current = next;
-      continue;
-    }
-
-    if (!current.trim()) {
-      let chunk = '';
-      for (const char of part) {
-        const charNext = chunk + char;
-        if (ctx.measureText(charNext).width <= maxWidth) {
-          chunk = charNext;
-        } else {
-          rows += 1;
-          chunk = char;
-        }
-      }
-      current = chunk;
-    } else {
-      rows += 1;
-      current = part;
-
-      if (ctx.measureText(current).width > maxWidth) {
-        let chunk = '';
-        for (const char of part) {
-          const charNext = chunk + char;
-          if (ctx.measureText(charNext).width <= maxWidth) {
-            chunk = charNext;
-          } else {
-            rows += 1;
-            chunk = char;
-          }
-        }
-        current = chunk;
-      }
-    }
-  }
-
-  return Math.max(1, rows);
-}
-
 export function ChapterSummariesSidebar() {
   const { stories, updateStory } = useDataStore();
   const { selectedStoryId } = useAppStore();
@@ -70,7 +15,7 @@ export function ChapterSummariesSidebar() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumbersRef = useRef<HTMLDivElement | null>(null);
   const [textWrapWidth, setTextWrapWidth] = useState(0);
-  const [textareaFont, setTextareaFont] = useState('14px system-ui');
+  const [lineHeightPx, setLineHeightPx] = useState(24);
 
   useEffect(() => {
     setDraft(selectedStory?.chapterSummaries ?? '');
@@ -79,22 +24,59 @@ export function ChapterSummariesSidebar() {
   const hasChanges = (selectedStory?.chapterSummaries ?? '') !== draft;
 
   const chapterLines = useMemo(() => {
-    const lines = draft.split('\n');
+    const lines = draft.split(/\r\n|\r|\n/);
     const max = Math.max(1, lines.length);
-    const numberedRows: string[] = [];
+    const numberedRows: Array<{ id: string; label: string }> = [];
+    const textarea = textareaRef.current;
 
-    for (let idx = 0; idx < max; idx += 1) {
-      const line = lines[idx] ?? '';
-      const chapterNum = String(idx + 1);
-      const wraps = measureWrappedRows(line, textWrapWidth, textareaFont);
-      numberedRows.push(chapterNum);
-      for (let row = 1; row < wraps; row += 1) {
-        numberedRows.push('');
+    if (!textarea || textWrapWidth <= 0) {
+      for (let idx = 0; idx < max; idx += 1) {
+        numberedRows.push({ id: `line-${idx}-row-0`, label: String(idx + 1) });
       }
+      return numberedRows;
+    }
+
+    const styles = window.getComputedStyle(textarea);
+    const measuredLineHeight = parseFloat(styles.lineHeight || '') || lineHeightPx;
+    const measurer = document.createElement('div');
+    measurer.style.position = 'fixed';
+    measurer.style.left = '-9999px';
+    measurer.style.top = '0';
+    measurer.style.visibility = 'hidden';
+    measurer.style.pointerEvents = 'none';
+    measurer.style.boxSizing = 'border-box';
+    measurer.style.whiteSpace = 'pre-wrap';
+    measurer.style.overflowWrap = 'break-word';
+    measurer.style.wordBreak = 'break-word';
+    measurer.style.padding = '0';
+    measurer.style.margin = '0';
+    measurer.style.border = '0';
+    measurer.style.width = `${textWrapWidth}px`;
+    measurer.style.fontFamily = styles.fontFamily;
+    measurer.style.fontSize = styles.fontSize;
+    measurer.style.fontWeight = styles.fontWeight;
+    measurer.style.fontStyle = styles.fontStyle;
+    measurer.style.letterSpacing = styles.letterSpacing;
+    measurer.style.lineHeight = styles.lineHeight;
+    document.body.appendChild(measurer);
+
+    try {
+      for (let idx = 0; idx < max; idx += 1) {
+        const line = lines[idx] ?? '';
+        const chapterNum = String(idx + 1);
+        measurer.textContent = line.length > 0 ? line : ' ';
+        const wraps = Math.max(1, Math.ceil(measurer.getBoundingClientRect().height / measuredLineHeight));
+        numberedRows.push({ id: `line-${idx}-row-0`, label: chapterNum });
+        for (let row = 1; row < wraps; row += 1) {
+          numberedRows.push({ id: `line-${idx}-row-${row}`, label: '' });
+        }
+      }
+    } finally {
+      document.body.removeChild(measurer);
     }
 
     return numberedRows;
-  }, [draft, textWrapWidth, textareaFont]);
+  }, [draft, textWrapWidth, lineHeightPx]);
 
   const syncLineNumberScroll = () => {
     if (!textareaRef.current || !lineNumbersRef.current) return;
@@ -110,7 +92,8 @@ export function ChapterSummariesSidebar() {
       const paddingLeft = parseFloat(styles.paddingLeft || '0') || 0;
       const paddingRight = parseFloat(styles.paddingRight || '0') || 0;
       setTextWrapWidth(Math.max(0, textareaRef.current.clientWidth - paddingLeft - paddingRight));
-      setTextareaFont(`${styles.fontSize} ${styles.fontFamily}`);
+      const measuredLineHeight = parseFloat(styles.lineHeight || '');
+      setLineHeightPx(Number.isFinite(measuredLineHeight) ? measuredLineHeight : 24);
     };
 
     updateMetrics();
@@ -145,9 +128,13 @@ export function ChapterSummariesSidebar() {
                   className="h-full overflow-hidden border-r border-gray-200 bg-gray-50 text-right text-xs text-gray-500 pt-2 pb-2"
                   aria-hidden="true"
                 >
-                  {chapterLines.map((chapter) => (
-                    <div key={chapter} className="h-6 leading-6 pr-3 select-none">
-                      {chapter}
+                  {chapterLines.map((row) => (
+                    <div
+                      key={row.id}
+                      className="pr-3 select-none"
+                      style={{ height: `${lineHeightPx}px`, lineHeight: `${lineHeightPx}px` }}
+                    >
+                      {row.label}
                     </div>
                   ))}
                 </div>
