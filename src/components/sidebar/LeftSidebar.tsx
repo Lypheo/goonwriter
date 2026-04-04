@@ -310,8 +310,17 @@ export function LeftSidebar() {
                             onClick={() => {
                               setSelectedCollection(collection.id);
                               toggleCollection(collection.id);
-                            }}
-                          >
+                            }}                              onDragOver={(e) => {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'move';
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                const storyId = e.dataTransfer.getData('text/plain');
+                                if (storyId) {
+                                  updateStory(storyId, { collectionId: collection.id });
+                                }
+                              }}                          >
                             <ChevronIcon isOpen={isCollectionExpanded} />
                             <CollectionIcon />
                             <span className="flex-1 text-sm truncate">{collection.name}</span>
@@ -361,8 +370,11 @@ export function LeftSidebar() {
                                   className={`group flex items-center gap-1 p-1.5 rounded cursor-pointer hover:bg-gray-200 ${
                                     selectedStoryId === story.id ? 'bg-blue-100' : ''
                                   }`}
-                                  onClick={() => setSelectedStory(story.id)}
-                                >
+                                  onClick={() => setSelectedStory(story.id)}                                draggable={true}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('text/plain', story.id);
+                                  e.dataTransfer.effectAllowed = 'move';
+                                }}                                >
                                   <DocumentIcon />
                                   <span className="flex-1 text-sm truncate">{story.name}</span>
                                   <div className="hidden group-hover:flex items-center gap-0.5">
