@@ -245,6 +245,25 @@ export interface SentenceCompletionCallbacks {
 
 const SENTENCE_MAX_TOKENS = 80;
 
+function buildCompletionModelProviderConfig(model: CompletionModelConfig): ProviderConfig | undefined {
+  const provider: ProviderConfig = {};
+
+  if (model.allowedProviders.length > 0) {
+    provider.only = model.allowedProviders;
+  }
+  if (model.bannedProviders.length > 0) {
+    provider.ignore = model.bannedProviders;
+  }
+  if (model.allowedQuantizations.length > 0) {
+    provider.quantizations = model.allowedQuantizations;
+  }
+  if (model.sortOrder) {
+    provider.sort = model.sortOrder;
+  }
+
+  return Object.keys(provider).length > 0 ? provider : undefined;
+}
+
 function extractFirstSentence(text: string): string {
   const trimmed = text.trimStart();
   if (!trimmed) return '';
@@ -315,6 +334,7 @@ export async function streamSentenceCompletion(
   abortSignal: AbortSignal
 ): Promise<void> {
   const baseUrl = model.baseUrl.replace(/\/$/, '');
+  const provider = buildCompletionModelProviderConfig(model);
   let accumulated = '';
 
   const processChunk = (text: string): boolean => {
@@ -346,6 +366,7 @@ export async function streamSentenceCompletion(
           stream_options: { include_usage: true },
           max_tokens: SENTENCE_MAX_TOKENS,
           temperature: 0.7,
+          ...(provider ? { provider } : {}),
         }),
         signal: abortSignal,
       });
@@ -380,6 +401,7 @@ export async function streamSentenceCompletion(
           stream_options: { include_usage: true },
           max_tokens: SENTENCE_MAX_TOKENS,
           temperature: 0.7,
+          ...(provider ? { provider } : {}),
         }),
         signal: abortSignal,
       });
@@ -421,6 +443,8 @@ export async function requestSentenceCompletion(
     return { text: '' };
   }
 
+  const provider = buildCompletionModelProviderConfig(model);
+
   if (model.mode === 'instruction') {
     const url = `${model.baseUrl.replace(/\/$/, '')}/chat/completions`;
     const messages: ChatMessage[] = [];
@@ -444,6 +468,7 @@ export async function requestSentenceCompletion(
         model: model.modelId,
         messages,
         stream: false,
+        ...(provider ? { provider } : {}),
       }),
       signal: abortSignal,
     });
@@ -475,6 +500,7 @@ export async function requestSentenceCompletion(
       model: model.modelId,
       prompt: context,
       stream: false,
+      ...(provider ? { provider } : {}),
     }),
     signal: abortSignal,
   });

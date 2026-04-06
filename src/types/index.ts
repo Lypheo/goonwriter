@@ -247,6 +247,10 @@ export interface CompletionModelConfig {
   baseUrl: string;
   token: string;
   modelId: string;
+  allowedProviders: string[];
+  bannedProviders: string[];
+  allowedQuantizations: string[];
+  sortOrder: 'price' | 'throughput' | 'latency' | null;
   enabled: boolean; // Whether this model is active for sentence completion
   mode: 'instruction' | 'raw'; // instruction = chat completion, raw = text completion
   systemMessage: string; // System message for instruction mode

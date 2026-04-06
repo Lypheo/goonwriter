@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useCompletionModelStore } from '../../stores';
 import type { CompletionModelConfig } from '../../types';
 import { Input, Textarea, Select, Modal, Slider } from '../ui/common';
@@ -45,18 +45,33 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const lastLoadedIdRef = useRef<string | null>(null);
+  const [allowedProvidersText, setAllowedProvidersText] = useState('');
+  const [bannedProvidersText, setBannedProvidersText] = useState('');
+  const [allowedQuantizationsText, setAllowedQuantizationsText] = useState('');
 
   const [formData, setFormData] = useState<Omit<CompletionModelConfig, 'id' | 'createdAt' | 'updatedAt' | 'totalCost' | 'totalTokens'>>({
     name: '',
     baseUrl: '',
     token: '',
     modelId: '',
+    allowedProviders: [],
+    bannedProviders: [],
+    allowedQuantizations: [],
+    sortOrder: null,
     enabled: false,
     mode: 'instruction',
     systemMessage: '',
     prompt: '',
     contextLength: 1000,
   });
+
+  const parseArrayValue = (value: string): string[] => {
+    return value
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  };
 
   const selectedModel = models.find((m) => m.id === selectedId);
 
@@ -67,34 +82,56 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
     }
   }, [isOpen, models, selectedId]);
 
-  // Load form data when selected model changes
+  // Load form data only when selected model id changes
   useEffect(() => {
-    if (selectedModel) {
-      setFormData({
-        name: selectedModel.name,
-        baseUrl: selectedModel.baseUrl,
-        token: selectedModel.token,
-        modelId: selectedModel.modelId,
-        enabled: selectedModel.enabled,
-        mode: selectedModel.mode,
-        systemMessage: selectedModel.systemMessage,
-        prompt: selectedModel.prompt,
-        contextLength: selectedModel.contextLength,
-      });
-    } else {
+    if (!selectedId) {
+      lastLoadedIdRef.current = null;
       setFormData({
         name: '',
         baseUrl: '',
         token: '',
         modelId: '',
+        allowedProviders: [],
+        bannedProviders: [],
+        allowedQuantizations: [],
+        sortOrder: null,
         enabled: false,
         mode: 'instruction',
         systemMessage: '',
         prompt: '',
         contextLength: 1000,
       });
+      setAllowedProvidersText('');
+      setBannedProvidersText('');
+      setAllowedQuantizationsText('');
+      return;
     }
-  }, [selectedModel]);
+
+    if (lastLoadedIdRef.current === selectedId) return;
+
+    const model = models.find((m) => m.id === selectedId);
+    if (!model) return;
+
+    lastLoadedIdRef.current = selectedId;
+    setFormData({
+      name: model.name,
+      baseUrl: model.baseUrl,
+      token: model.token,
+      modelId: model.modelId,
+      allowedProviders: model.allowedProviders,
+      bannedProviders: model.bannedProviders,
+      allowedQuantizations: model.allowedQuantizations,
+      sortOrder: model.sortOrder,
+      enabled: model.enabled,
+      mode: model.mode,
+      systemMessage: model.systemMessage,
+      prompt: model.prompt,
+      contextLength: model.contextLength,
+    });
+    setAllowedProvidersText(model.allowedProviders.join(', '));
+    setBannedProvidersText(model.bannedProviders.join(', '));
+    setAllowedQuantizationsText(model.allowedQuantizations.join(', '));
+  }, [selectedId, models]);
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -300,6 +337,61 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
                 onChange={(e) => setFormData((prev) => ({ ...prev, token: e.target.value }))}
                 placeholder="sk-..."
               />
+
+              {/* Provider filtering */}
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Provider Settings</h4>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <Input
+                    label="Allowed Providers (comma-separated)"
+                    value={allowedProvidersText}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setAllowedProvidersText(value);
+                      setFormData((prev) => ({ ...prev, allowedProviders: parseArrayValue(value) }));
+                    }}
+                    placeholder="DeepInfra, Together"
+                  />
+                  <Input
+                    label="Banned Providers (comma-separated)"
+                    value={bannedProvidersText}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setBannedProvidersText(value);
+                      setFormData((prev) => ({ ...prev, bannedProviders: parseArrayValue(value) }));
+                    }}
+                    placeholder="OpenAI"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    label="Allowed Quantizations (comma-separated)"
+                    value={allowedQuantizationsText}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setAllowedQuantizationsText(value);
+                      setFormData((prev) => ({ ...prev, allowedQuantizations: parseArrayValue(value) }));
+                    }}
+                    placeholder="fp16, int8"
+                  />
+                  <Select
+                    label="Sort Order"
+                    value={formData.sortOrder || ''}
+                    onChange={(e) => setFormData((prev) => ({
+                      ...prev,
+                      sortOrder: (e.target.value || null) as 'price' | 'throughput' | 'latency' | null,
+                    }))}
+                    options={[
+                      { value: '', label: 'None' },
+                      { value: 'price', label: 'Price' },
+                      { value: 'throughput', label: 'Throughput' },
+                      { value: 'latency', label: 'Latency' },
+                    ]}
+                  />
+                </div>
+              </div>
 
               {/* Mode */}
               <div className="border-t pt-4">

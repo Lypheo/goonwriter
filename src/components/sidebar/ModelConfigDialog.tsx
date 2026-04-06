@@ -440,15 +440,21 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                   <Input
                     label="Allowed Providers (comma-separated)"
                     value={allowedProvidersText}
-                    onChange={(e) => setAllowedProvidersText(e.target.value)}
-                    onBlur={() => updateTemplate('allowedProviders', parseArrayValue(allowedProvidersText))}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setAllowedProvidersText(value);
+                      updateTemplate('allowedProviders', parseArrayValue(value));
+                    }}
                     placeholder="DeepInfra, Together"
                   />
                   <Input
                     label="Banned Providers (comma-separated)"
                     value={bannedProvidersText}
-                    onChange={(e) => setBannedProvidersText(e.target.value)}
-                    onBlur={() => updateTemplate('bannedProviders', parseArrayValue(bannedProvidersText))}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setBannedProvidersText(value);
+                      updateTemplate('bannedProviders', parseArrayValue(value));
+                    }}
                     placeholder="OpenAI"
                   />
                 </div>
@@ -457,8 +463,11 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                   <Input
                     label="Allowed Quantizations (comma-separated)"
                     value={allowedQuantizationsText}
-                    onChange={(e) => setAllowedQuantizationsText(e.target.value)}
-                    onBlur={() => updateTemplate('allowedQuantizations', parseArrayValue(allowedQuantizationsText))}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setAllowedQuantizationsText(value);
+                      updateTemplate('allowedQuantizations', parseArrayValue(value));
+                    }}
                     placeholder="fp16, int8"
                   />
                   <Select

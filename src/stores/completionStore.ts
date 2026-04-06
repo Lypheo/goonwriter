@@ -33,8 +33,15 @@ export const useCompletionModelStore = create<CompletionModelState>()(
       if (get().isInitialized) return;
       try {
         const data = await fetchData<CompletionSettings>('completionModels');
+        const normalizedModels = (data?.models || []).map((model) => ({
+          ...model,
+          allowedProviders: model.allowedProviders || [],
+          bannedProviders: model.bannedProviders || [],
+          allowedQuantizations: model.allowedQuantizations || [],
+          sortOrder: model.sortOrder || null,
+        }));
         set({
-          models: data?.models || [],
+          models: normalizedModels,
           isInitialized: true,
         });
       } catch (error) {
@@ -51,6 +58,10 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         baseUrl: partial?.baseUrl || 'https://openrouter.ai/api/v1',
         token: partial?.token || '',
         modelId: partial?.modelId || '',
+        allowedProviders: partial?.allowedProviders || [],
+        bannedProviders: partial?.bannedProviders || [],
+        allowedQuantizations: partial?.allowedQuantizations || [],
+        sortOrder: partial?.sortOrder || null,
         enabled: partial?.enabled ?? false,
         mode: partial?.mode || 'instruction',
         systemMessage: partial?.systemMessage || 'You are a writing assistant. Complete the sentence or predict the next sentence naturally and concisely. Output ONLY the completion text with no commentary.',
@@ -95,6 +106,9 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         ...model,
         id: uuidv4(),
         name: `${model.name} (copy)`,
+        allowedProviders: [...model.allowedProviders],
+        bannedProviders: [...model.bannedProviders],
+        allowedQuantizations: [...model.allowedQuantizations],
         totalCost: 0,
         totalTokens: 0,
         createdAt: now,
