@@ -55,6 +55,7 @@ export function RightSidebar() {
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [showRawPromptModal, setShowRawPromptModal] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
@@ -315,6 +316,32 @@ export function RightSidebar() {
 
     window.setTimeout(() => setCopyStatus('idle'), 1500);
   };
+
+  const getExportStoryText = (): string => {
+    if (!selectedStory) return '';
+
+    return (selectedStory.sections || [])
+      .filter((section) => section.type === 'assistant')
+      .map((section) => section.content || '')
+      .filter((content) => content.trim().length > 0)
+      .join('\n\n');
+  };
+
+  const handleExportStory = async () => {
+    const exportText = getExportStoryText();
+    if (!exportText) return;
+
+    try {
+      await navigator.clipboard.writeText(exportText);
+      setExportStatus('copied');
+    } catch {
+      setExportStatus('failed');
+    }
+
+    window.setTimeout(() => setExportStatus('idle'), 1500);
+  };
+
+  const exportStoryText = getExportStoryText();
   
   const modelOptions = [
     { value: '', label: 'Select a model...' },
@@ -435,15 +462,38 @@ export function RightSidebar() {
         )}
 
         <div className="flex justify-end mt-2">
-          <button
-            onClick={() => setShowRawPromptModal(true)}
-            disabled={!selectedStory || !selectedModel}
-            title="Preview the exact raw prompt sent to /completions"
-            className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:no-underline disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Preview raw prompt
-          </button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportStory}
+              disabled={!selectedStory || !exportStoryText}
+              title="Copy all assistant responses concatenated"
+            >
+              Export Story
+            </Button>
+            <button
+              onClick={() => setShowRawPromptModal(true)}
+              disabled={!selectedStory || !selectedModel}
+              title="Preview the exact raw prompt sent to /completions"
+              className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:no-underline disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Preview raw prompt
+            </button>
+          </div>
         </div>
+
+        {selectedStory && (
+          <p className={`mt-2 text-xs text-right ${exportStatus === 'failed' ? 'text-red-600' : 'text-gray-500'}`}>
+            {exportStatus === 'copied'
+              ? 'Story copied to clipboard'
+              : exportStatus === 'failed'
+                ? 'Export failed'
+                : exportStoryText
+                  ? `${exportStoryText.length.toLocaleString()} characters`
+                  : 'No assistant responses to export'}
+          </p>
+        )}
         
         {!selectedStory && (
           <p className="mt-2 text-xs text-gray-500 text-center">
