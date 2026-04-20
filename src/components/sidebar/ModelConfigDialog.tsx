@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useModelStore, defaultInstructionTemplate } from '../../stores';
 import type { InstructionTemplate } from '../../types';
 import { Input, Textarea, Select, Modal } from '../ui/common';
+import { StringListEditor } from '../ui/StringListEditor';
+import { appendUniqueListValues, copyListValues } from './providerListUtils';
 
 interface ModelConfigDialogProps {
   isOpen: boolean;
@@ -61,10 +63,10 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     instructionTemplate: { ...defaultInstructionTemplate },
   });
   
-  // Local state for comma-separated fields
-  const [allowedProvidersText, setAllowedProvidersText] = useState('');
-  const [bannedProvidersText, setBannedProvidersText] = useState('');
-  const [allowedQuantizationsText, setAllowedQuantizationsText] = useState('');
+  // Local draft state for list-entry inputs
+  const [allowedProvidersDraft, setAllowedProvidersDraft] = useState('');
+  const [bannedProvidersDraft, setBannedProvidersDraft] = useState('');
+  const [allowedQuantizationsDraft, setAllowedQuantizationsDraft] = useState('');
   
   const selectedModel = models.find(m => m.id === selectedId);
   
@@ -96,9 +98,9 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
         disableThinkingPrefill: '</think>',
         instructionTemplate: { ...defaultInstructionTemplate },
       });
-      setAllowedProvidersText('');
-      setBannedProvidersText('');
-      setAllowedQuantizationsText('');
+      setAllowedProvidersDraft('');
+      setBannedProvidersDraft('');
+      setAllowedQuantizationsDraft('');
       return;
     }
 
@@ -115,9 +117,9 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
       instructionTemplate: { ...model.instructionTemplate },
     });
-    setAllowedProvidersText(model.instructionTemplate.allowedProviders.join(', '));
-    setBannedProvidersText(model.instructionTemplate.bannedProviders.join(', '));
-    setAllowedQuantizationsText(model.instructionTemplate.allowedQuantizations.join(', '));
+    setAllowedProvidersDraft('');
+    setBannedProvidersDraft('');
+    setAllowedQuantizationsDraft('');
   }, [selectedId, models]);
 
   // Focus selected model when dialog opens
@@ -191,12 +193,30 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       },
     }));
   };
-  
-  const parseArrayValue = (value: string): string[] => {
-    return value
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+
+  const addTemplateListValue = (
+    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    draft: string,
+    setDraft: (value: string) => void
+  ) => {
+    const current = formData.instructionTemplate[field];
+    const nextValues = appendUniqueListValues(current, draft);
+
+    if (nextValues === current) {
+      setDraft('');
+      return;
+    }
+
+    updateTemplate(field, nextValues);
+    setDraft('');
+  };
+
+  const removeTemplateListValue = (
+    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    value: string
+  ) => {
+    const current = formData.instructionTemplate[field];
+    updateTemplate(field, current.filter((item) => item !== value));
   };
   
   // Auto-save on form changes (debounced via updateModel)
@@ -437,38 +457,47 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 <h4 className="font-medium text-gray-700 mb-3">Provider Settings</h4>
                 
                 <div className="grid grid-cols-2 gap-4 mb-4">
-                  <Input
-                    label="Allowed Providers (comma-separated)"
-                    value={allowedProvidersText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setAllowedProvidersText(value);
-                      updateTemplate('allowedProviders', parseArrayValue(value));
-                    }}
-                    placeholder="DeepInfra, Together"
+                  <StringListEditor
+                    label="Allowed Providers"
+                    values={formData.instructionTemplate.allowedProviders}
+                    draft={allowedProvidersDraft}
+                    onDraftChange={setAllowedProvidersDraft}
+                    onAdd={() => addTemplateListValue('allowedProviders', allowedProvidersDraft, setAllowedProvidersDraft)}
+                    onRemove={(value) => removeTemplateListValue('allowedProviders', value)}
+                    onCopy={() => copyListValues(formData.instructionTemplate.allowedProviders)}
+                    emptyText="No providers added"
+                    placeholder="DeepInfra or DeepInfra, Together"
+                    chipClassName="bg-blue-100 text-blue-800"
+                    chipRemoveClassName="text-blue-700 hover:text-blue-900"
                   />
-                  <Input
-                    label="Banned Providers (comma-separated)"
-                    value={bannedProvidersText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setBannedProvidersText(value);
-                      updateTemplate('bannedProviders', parseArrayValue(value));
-                    }}
-                    placeholder="OpenAI"
+                  <StringListEditor
+                    label="Banned Providers"
+                    values={formData.instructionTemplate.bannedProviders}
+                    draft={bannedProvidersDraft}
+                    onDraftChange={setBannedProvidersDraft}
+                    onAdd={() => addTemplateListValue('bannedProviders', bannedProvidersDraft, setBannedProvidersDraft)}
+                    onRemove={(value) => removeTemplateListValue('bannedProviders', value)}
+                    onCopy={() => copyListValues(formData.instructionTemplate.bannedProviders)}
+                    emptyText="No providers added"
+                    placeholder="OpenAI or OpenAI, Groq"
+                    chipClassName="bg-red-100 text-red-800"
+                    chipRemoveClassName="text-red-700 hover:text-red-900"
                   />
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Allowed Quantizations (comma-separated)"
-                    value={allowedQuantizationsText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setAllowedQuantizationsText(value);
-                      updateTemplate('allowedQuantizations', parseArrayValue(value));
-                    }}
-                    placeholder="fp16, int8"
+                  <StringListEditor
+                    label="Allowed Quantizations"
+                    values={formData.instructionTemplate.allowedQuantizations}
+                    draft={allowedQuantizationsDraft}
+                    onDraftChange={setAllowedQuantizationsDraft}
+                    onAdd={() => addTemplateListValue('allowedQuantizations', allowedQuantizationsDraft, setAllowedQuantizationsDraft)}
+                    onRemove={(value) => removeTemplateListValue('allowedQuantizations', value)}
+                    onCopy={() => copyListValues(formData.instructionTemplate.allowedQuantizations)}
+                    emptyText="No quantizations added"
+                    placeholder="fp16 or fp16, int8"
+                    chipClassName="bg-purple-100 text-purple-800"
+                    chipRemoveClassName="text-purple-700 hover:text-purple-900"
                   />
                   <Select
                     label="Sort Order"

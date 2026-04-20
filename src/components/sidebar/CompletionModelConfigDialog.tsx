@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useCompletionModelStore } from '../../stores';
 import type { CompletionModelConfig } from '../../types';
 import { Input, Textarea, Select, Modal, Slider } from '../ui/common';
+import { StringListEditor } from '../ui/StringListEditor';
+import { appendUniqueListValues, copyListValues } from './providerListUtils';
 
 interface CompletionModelConfigDialogProps {
   isOpen: boolean;
@@ -46,9 +48,9 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const lastLoadedIdRef = useRef<string | null>(null);
-  const [allowedProvidersText, setAllowedProvidersText] = useState('');
-  const [bannedProvidersText, setBannedProvidersText] = useState('');
-  const [allowedQuantizationsText, setAllowedQuantizationsText] = useState('');
+  const [allowedProvidersDraft, setAllowedProvidersDraft] = useState('');
+  const [bannedProvidersDraft, setBannedProvidersDraft] = useState('');
+  const [allowedQuantizationsDraft, setAllowedQuantizationsDraft] = useState('');
 
   const [formData, setFormData] = useState<Omit<CompletionModelConfig, 'id' | 'createdAt' | 'updatedAt' | 'totalCost' | 'totalTokens'>>({
     name: '',
@@ -66,11 +68,30 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
     contextLength: 1000,
   });
 
-  const parseArrayValue = (value: string): string[] => {
-    return value
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+  const addListValue = (
+    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    draft: string,
+    setDraft: (value: string) => void
+  ) => {
+    const current = formData[field];
+    const nextValues = appendUniqueListValues(current, draft);
+    if (nextValues === current) {
+      setDraft('');
+      return;
+    }
+
+    setFormData((prev) => ({ ...prev, [field]: nextValues }));
+    setDraft('');
+  };
+
+  const removeListValue = (
+    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    value: string
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: prev[field].filter((item) => item !== value),
+    }));
   };
 
   const selectedModel = models.find((m) => m.id === selectedId);
@@ -101,9 +122,9 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
         prompt: '',
         contextLength: 1000,
       });
-      setAllowedProvidersText('');
-      setBannedProvidersText('');
-      setAllowedQuantizationsText('');
+      setAllowedProvidersDraft('');
+      setBannedProvidersDraft('');
+      setAllowedQuantizationsDraft('');
       return;
     }
 
@@ -128,9 +149,9 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
       prompt: model.prompt,
       contextLength: model.contextLength,
     });
-    setAllowedProvidersText(model.allowedProviders.join(', '));
-    setBannedProvidersText(model.bannedProviders.join(', '));
-    setAllowedQuantizationsText(model.allowedQuantizations.join(', '));
+    setAllowedProvidersDraft('');
+    setBannedProvidersDraft('');
+    setAllowedQuantizationsDraft('');
   }, [selectedId, models]);
 
   // Reset state when dialog closes
@@ -343,38 +364,47 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
                 <h4 className="text-sm font-medium text-gray-700 mb-3">Provider Settings</h4>
 
                 <div className="grid grid-cols-2 gap-4 mb-4">
-                  <Input
-                    label="Allowed Providers (comma-separated)"
-                    value={allowedProvidersText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setAllowedProvidersText(value);
-                      setFormData((prev) => ({ ...prev, allowedProviders: parseArrayValue(value) }));
-                    }}
-                    placeholder="DeepInfra, Together"
+                  <StringListEditor
+                    label="Allowed Providers"
+                    values={formData.allowedProviders}
+                    draft={allowedProvidersDraft}
+                    onDraftChange={setAllowedProvidersDraft}
+                    onAdd={() => addListValue('allowedProviders', allowedProvidersDraft, setAllowedProvidersDraft)}
+                    onRemove={(value) => removeListValue('allowedProviders', value)}
+                    onCopy={() => copyListValues(formData.allowedProviders)}
+                    emptyText="No providers added"
+                    placeholder="DeepInfra or DeepInfra, Together"
+                    chipClassName="bg-blue-100 text-blue-800"
+                    chipRemoveClassName="text-blue-700 hover:text-blue-900"
                   />
-                  <Input
-                    label="Banned Providers (comma-separated)"
-                    value={bannedProvidersText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setBannedProvidersText(value);
-                      setFormData((prev) => ({ ...prev, bannedProviders: parseArrayValue(value) }));
-                    }}
-                    placeholder="OpenAI"
+                  <StringListEditor
+                    label="Banned Providers"
+                    values={formData.bannedProviders}
+                    draft={bannedProvidersDraft}
+                    onDraftChange={setBannedProvidersDraft}
+                    onAdd={() => addListValue('bannedProviders', bannedProvidersDraft, setBannedProvidersDraft)}
+                    onRemove={(value) => removeListValue('bannedProviders', value)}
+                    onCopy={() => copyListValues(formData.bannedProviders)}
+                    emptyText="No providers added"
+                    placeholder="OpenAI or OpenAI, Groq"
+                    chipClassName="bg-red-100 text-red-800"
+                    chipRemoveClassName="text-red-700 hover:text-red-900"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Allowed Quantizations (comma-separated)"
-                    value={allowedQuantizationsText}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setAllowedQuantizationsText(value);
-                      setFormData((prev) => ({ ...prev, allowedQuantizations: parseArrayValue(value) }));
-                    }}
-                    placeholder="fp16, int8"
+                  <StringListEditor
+                    label="Allowed Quantizations"
+                    values={formData.allowedQuantizations}
+                    draft={allowedQuantizationsDraft}
+                    onDraftChange={setAllowedQuantizationsDraft}
+                    onAdd={() => addListValue('allowedQuantizations', allowedQuantizationsDraft, setAllowedQuantizationsDraft)}
+                    onRemove={(value) => removeListValue('allowedQuantizations', value)}
+                    onCopy={() => copyListValues(formData.allowedQuantizations)}
+                    emptyText="No quantizations added"
+                    placeholder="fp16 or fp16, int8"
+                    chipClassName="bg-purple-100 text-purple-800"
+                    chipRemoveClassName="text-purple-700 hover:text-purple-900"
                   />
                   <Select
                     label="Sort Order"
