@@ -269,6 +269,11 @@ export function StoryEditor() {
     return false;
   };
 
+  const canDeleteFollowingSections = (sectionId: string) => {
+    const index = sections.findIndex((section) => section.id === sectionId);
+    return index >= 0 && index < sections.length - 1;
+  };
+
   const removeSection = (sectionId: string) => {
     if (!selectedStory) return;
 
@@ -294,6 +299,42 @@ export function StoryEditor() {
         return next;
       });
     }
+  };
+
+  const deleteFollowingSections = (sectionId: string) => {
+    if (!selectedStory) return;
+
+    const index = sections.findIndex((section) => section.id === sectionId);
+    if (index < 0 || index >= sections.length - 1) return;
+
+    const nextSections = sections.slice(0, index + 1);
+    const keptSectionIds = new Set(nextSections.map((section) => section.id));
+
+    commitSections(nextSections);
+
+    if (
+      activeSectionId
+      && !keptSectionIds.has(activeSectionId)
+      && !keptSectionIds.has(activeSectionId.replace(':think', ''))
+    ) {
+      setActiveSectionId(sectionId);
+    }
+
+    if (pendingCaret && !keptSectionIds.has(pendingCaret.sectionId)) {
+      setPendingCaret(null);
+    }
+
+    if (pendingRemoveSectionId && !keptSectionIds.has(pendingRemoveSectionId)) {
+      setPendingRemoveSectionId(null);
+    }
+
+    setExpandedThinkSectionIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (keptSectionIds.has(id)) next.add(id);
+      }
+      return next;
+    });
   };
 
   const toggleThinkCollapsed = (sectionId: string) => {
@@ -935,17 +976,36 @@ export function StoryEditor() {
                       </button>
                     </>
                   ) : (
-                    <button
-                      onClick={() => setPendingRemoveSectionId(section.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white/70 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white/70"
-                      disabled={!canRemoveSection(section) || isGenerating}
-                      title={canRemoveSection(section) ? 'Remove section' : 'Cannot remove the last section of this type'}
-                    >
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fillRule="evenodd" d="M8.257 3.099c.366-.446.92-.707 1.5-.707h.486c.58 0 1.134.261 1.5.707l.633.773h2.624a.75.75 0 010 1.5h-.73l-.565 9.03a2 2 0 01-1.997 1.875H8.292a2 2 0 01-1.997-1.875l-.565-9.03H5a.75.75 0 010-1.5h2.624l.633-.773zM9 8.25a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5zm3 0a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5z" clipRule="evenodd" />
-                      </svg>
-                      Remove
-                    </button>
+                    <>
+                      <button
+                        onClick={() => {
+                          if (!canDeleteFollowingSections(section.id)) return;
+                          if (confirm('Delete all sections after this one?')) {
+                            deleteFollowingSections(section.id);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-white/70 px-2 py-1 text-xs text-amber-800 hover:bg-amber-50 disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white/70"
+                        disabled={!canDeleteFollowingSections(section.id) || isGenerating}
+                        title={canDeleteFollowingSections(section.id) ? 'Delete all sections after this one' : 'No following sections'}
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                          <path d="M3.5 4.75A.75.75 0 014.25 4h11.5a.75.75 0 010 1.5H4.25a.75.75 0 01-.75-.75zm2.75 3a.75.75 0 01.75.75v6a.75.75 0 01-1.5 0v-6a.75.75 0 01.75-.75zm4.5 0a.75.75 0 01.75.75v6a.75.75 0 01-1.5 0v-6a.75.75 0 01.75-.75zm4.5 0a.75.75 0 01.75.75v6a.75.75 0 01-1.5 0v-6a.75.75 0 01.75-.75z" />
+                          <path d="M2.5 16a.75.75 0 01.75-.75h13.5a.75.75 0 010 1.5H3.25A.75.75 0 012.5 16z" />
+                        </svg>
+                        Delete Following
+                      </button>
+                      <button
+                        onClick={() => setPendingRemoveSectionId(section.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white/70 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white/70"
+                        disabled={!canRemoveSection(section) || isGenerating}
+                        title={canRemoveSection(section) ? 'Remove section' : 'Cannot remove the last section of this type'}
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                          <path fillRule="evenodd" d="M8.257 3.099c.366-.446.92-.707 1.5-.707h.486c.58 0 1.134.261 1.5.707l.633.773h2.624a.75.75 0 010 1.5h-.73l-.565 9.03a2 2 0 01-1.997 1.875H8.292a2 2 0 01-1.997-1.875l-.565-9.03H5a.75.75 0 010-1.5h2.624l.633-.773zM9 8.25a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5zm3 0a.75.75 0 011.5 0v5a.75.75 0 01-1.5 0v-5z" clipRule="evenodd" />
+                        </svg>
+                        Remove
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
