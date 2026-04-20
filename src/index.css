@@ -123,8 +123,8 @@
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 18px;
+  height: 18px;
 }
 
 ::-webkit-scrollbar-track {
@@ -138,6 +138,39 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #a1a1a1;
+}
+
+/* Story editor scrollbar */
+.story-scroll-container {
+  scrollbar-width: none;
+  scrollbar-gutter: stable;
+}
+
+.story-scroll-container::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.story-custom-scrollbar-track {
+  position: relative;
+  width: 22px;
+  height: 100%;
+  border-radius: 999px;
+  background: #efefef;
+}
+
+.story-custom-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  width: 22px;
+  border-radius: 999px;
+  background: #b7b7b7;
+  transition: background-color 0.15s ease;
+}
+
+.story-custom-scrollbar-thumb:hover,
+.story-custom-scrollbar-thumb.is-dragging {
+  background: #979797;
 }
 
 /* Range input styling */

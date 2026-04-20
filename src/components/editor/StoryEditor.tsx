@@ -211,6 +211,7 @@ export function StoryEditor() {
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [templateDraft, setTemplateDraft] = useState('');
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [scrollNavSectionId, setScrollNavSectionId] = useState<string | null>(null);
   const [pendingCaret, setPendingCaret] = useState<{ sectionId: string; index: number } | null>(null);
   const [pendingRemoveSectionId, setPendingRemoveSectionId] = useState<string | null>(null);
   const [expandedThinkSectionIds, setExpandedThinkSectionIds] = useState<Set<string>>(new Set());
@@ -219,6 +220,9 @@ export function StoryEditor() {
   const [completionVisible, setCompletionVisible] = useState(false);
   const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0);
   const [completionPosition, setCompletionPosition] = useState({ top: 0, left: 0 });
+  const [scrollMetrics, setScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
+  const [isScrollbarDragging, setIsScrollbarDragging] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const sectionEditorsRef = useRef<Map<string, Editor>>(new Map());
   const completionAbortControllers = useRef<Map<string, AbortController>>(new Map());
   const completionActiveRef = useRef(false);
@@ -226,11 +230,8 @@ export function StoryEditor() {
   const completionSelectedIndexRef = useRef(0);
   const completionEditorRef = useRef<Editor | null>(null);
 
-  const completionModels = useCompletionModelStore((s) => s.models);
   const getEnabledCompletionModels = useCompletionModelStore((s) => s.getEnabledModels);
   const accumulateCompletionCost = useCompletionModelStore((s) => s.accumulateCost);
-  const totalCompletionCost = completionModels.reduce((sum, m) => sum + m.totalCost, 0);
-  const totalCompletionTokens = completionModels.reduce((sum, m) => sum + m.totalTokens, 0);
 
   const sections = useMemo(() => selectedStory?.sections || [], [selectedStory?.sections]);
 
@@ -402,6 +403,131 @@ export function StoryEditor() {
 
   const canUndo = !!activeEditor?.can().undo();
   const canRedo = !!activeEditor?.can().redo();
+
+  const normalizedActiveSectionId = activeSectionId?.endsWith(':think')
+    ? activeSectionId.slice(0, -':think'.length)
+    : activeSectionId;
+
+  const navigationAnchorSectionId = scrollNavSectionId && sections.some((section) => section.id === scrollNavSectionId)
+    ? scrollNavSectionId
+    : normalizedActiveSectionId;
+
+  const navigationAnchorIndex = navigationAnchorSectionId
+    ? sections.findIndex((section) => section.id === navigationAnchorSectionId)
+    : -1;
+
+  const previousSectionId = navigationAnchorIndex > 0
+    ? sections[navigationAnchorIndex - 1].id
+    : null;
+
+  const nextSectionId = navigationAnchorIndex >= 0 && navigationAnchorIndex < sections.length - 1
+    ? sections[navigationAnchorIndex + 1].id
+    : navigationAnchorIndex < 0 && sections.length > 0
+      ? sections[0].id
+    : null;
+
+  const scrollSectionToTop = useCallback((sectionId: string) => {
+    const sectionElement = document.querySelector(`[data-section-id="${sectionId}"]`);
+    sectionElement?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setScrollNavSectionId(sectionId);
+  }, []);
+
+  const handleFocusPreviousSection = useCallback(() => {
+    if (!previousSectionId) return;
+    scrollSectionToTop(previousSectionId);
+  }, [previousSectionId, scrollSectionToTop]);
+
+  const handleFocusNextSection = useCallback(() => {
+    if (!nextSectionId) return;
+    scrollSectionToTop(nextSectionId);
+  }, [nextSectionId, scrollSectionToTop]);
+
+  const updateScrollMetrics = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    setScrollMetrics({
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const onScroll = () => updateScrollMetrics();
+    onScroll();
+    container.addEventListener('scroll', onScroll, { passive: true });
+
+    const resizeObserver = new ResizeObserver(() => updateScrollMetrics());
+    resizeObserver.observe(container);
+    const content = container.firstElementChild;
+    if (content instanceof HTMLElement) {
+      resizeObserver.observe(content);
+    }
+
+    window.addEventListener('resize', onScroll);
+
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [sections, updateScrollMetrics]);
+
+  const maxScrollTop = Math.max(0, scrollMetrics.scrollHeight - scrollMetrics.clientHeight);
+  const thumbHeight = maxScrollTop > 0
+    ? Math.max(48, (scrollMetrics.clientHeight / scrollMetrics.scrollHeight) * scrollMetrics.clientHeight)
+    : scrollMetrics.clientHeight;
+  const maxThumbTop = Math.max(0, scrollMetrics.clientHeight - thumbHeight);
+  const thumbTop = maxScrollTop > 0
+    ? (scrollMetrics.scrollTop / maxScrollTop) * maxThumbTop
+    : 0;
+
+  const handleScrollbarTrackMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const container = scrollContainerRef.current;
+    if (!container || maxScrollTop <= 0) return;
+
+    const trackRect = event.currentTarget.getBoundingClientRect();
+    const clickY = event.clientY - trackRect.top;
+    const targetThumbTop = Math.max(0, Math.min(maxThumbTop, clickY - thumbHeight / 2));
+    const targetScrollTop = (targetThumbTop / Math.max(1, maxThumbTop)) * maxScrollTop;
+    container.scrollTop = targetScrollTop;
+  }, [maxScrollTop, maxThumbTop, thumbHeight]);
+
+  const handleScrollbarThumbMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const container = scrollContainerRef.current;
+    if (!container || maxScrollTop <= 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    setIsScrollbarDragging(true);
+
+    const startY = event.clientY;
+    const startScrollTop = container.scrollTop;
+    const thumbTravel = Math.max(1, maxThumbTop);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const scrollDelta = (deltaY / thumbTravel) * maxScrollTop;
+      container.scrollTop = Math.max(0, Math.min(maxScrollTop, startScrollTop + scrollDelta));
+    };
+
+    const handleMouseUp = () => {
+      setIsScrollbarDragging(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [maxScrollTop, maxThumbTop]);
+
+  useEffect(() => {
+    if (!normalizedActiveSectionId) return;
+    setScrollNavSectionId(null);
+  }, [normalizedActiveSectionId]);
 
   const cancelCompletions = useCallback((options?: { refocusEditor?: boolean }) => {
     const editorToRefocus = options?.refocusEditor ? completionEditorRef.current : null;
@@ -712,23 +838,24 @@ export function StoryEditor() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <CompletionPopup
-          items={completionItems}
-          position={completionPosition}
-          selectedIndex={completionSelectedIndex}
-          onSelect={acceptCompletion}
-          visible={completionVisible}
-        />
+      <div className="flex-1 min-h-0 relative">
+        <div ref={scrollContainerRef} className="h-full min-h-0 overflow-y-auto story-scroll-container">
+          <CompletionPopup
+            items={completionItems}
+            position={completionPosition}
+            selectedIndex={completionSelectedIndex}
+            onSelect={acceptCompletion}
+            visible={completionVisible}
+          />
 
-        <div className="max-w-4xl mx-auto px-6 py-4 space-y-3">
-          {sections.map((section) => (
-            <div
-              key={section.id}
-              id={section.type === 'assistant' ? `assistant-section-${section.id}` : undefined}
-              data-section-id={section.id}
-              className={`rounded-lg border ${roleStyles[section.type]}`}
-            >
+          <div className="max-w-4xl mx-auto px-6 py-4 pr-20 space-y-3">
+            {sections.map((section) => (
+              <div
+                key={section.id}
+                id={section.type === 'assistant' ? `assistant-section-${section.id}` : undefined}
+                data-section-id={section.id}
+                className={`rounded-lg border ${roleStyles[section.type]}`}
+              >
               {(() => {
                 const collapsible = isCollapsibleSection(section.content);
                 const effectiveCollapsed = collapsible && section.collapsed;
@@ -880,8 +1007,49 @@ export function StoryEditor() {
                   </>
                 );
               })()}
-            </div>
-          ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className="absolute top-2 bottom-2 right-1 z-20 w-8 flex items-center justify-center"
+          onMouseDown={handleScrollbarTrackMouseDown}
+        >
+          <div className="story-custom-scrollbar-track">
+            <div
+              className={`story-custom-scrollbar-thumb ${isScrollbarDragging ? 'is-dragging' : ''}`}
+              style={{ height: `${Math.max(24, thumbHeight)}px`, transform: `translateY(${thumbTop}px)` }}
+              onMouseDown={handleScrollbarThumbMouseDown}
+            />
+          </div>
+        </div>
+
+        <div className="absolute right-12 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={handleFocusPreviousSection}
+            disabled={!previousSectionId}
+            className="w-8 h-8 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Focus previous section"
+            aria-label="Focus previous section"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleFocusNextSection}
+            disabled={!nextSectionId}
+            className="w-8 h-8 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white text-gray-700 shadow-sm hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Focus next section"
+            aria-label="Focus next section"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -893,12 +1061,6 @@ export function StoryEditor() {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {totalCompletionCost > 0 && (
-            <span className="text-gray-400 font-mono" title="Sentence completion cost (all models)">
-              ✎ {totalCompletionCost < 0.1 ? `${(totalCompletionCost * 100).toFixed(3)}¢` : `$${totalCompletionCost.toFixed(3)}`} ({totalCompletionTokens.toLocaleString()} tok)
-            </span>
-          )}
-          {' | '}
           {(selectedStory.totalCost > 0 || selectedStory.totalTokens > 0) && (
             <div className="text-gray-400 font-mono" title="Accumulated generation cost and tokens for this story">
               {selectedStory.totalTokens.toLocaleString()} tokens |
