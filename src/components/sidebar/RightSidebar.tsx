@@ -275,16 +275,23 @@ export function RightSidebar() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'Enter') {
         e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
         if (isGenerating) {
           stopGeneration();
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              window.dispatchEvent(new CustomEvent('goonwriter:focus-last-section-end'));
+            });
+          });
         } else {
           handleGenerate();
         }
       }
     };
     
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [handleGenerate, isGenerating, stopGeneration]);
   
   const handleStop = () => {

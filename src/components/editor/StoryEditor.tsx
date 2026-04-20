@@ -442,6 +442,35 @@ export function StoryEditor() {
     scrollSectionToTop(nextSectionId);
   }, [nextSectionId, scrollSectionToTop]);
 
+  const focusLastSectionEditorAtEnd = useCallback(() => {
+    for (let index = sections.length - 1; index >= 0; index -= 1) {
+      const sectionId = sections[index].id;
+      const editor = sectionEditorsRef.current.get(sectionId);
+      if (!editor) continue;
+
+      editor.chain().focus('end').run();
+      setActiveSectionId(sectionId);
+      setHistoryTick((tick) => tick + 1);
+
+      requestAnimationFrame(() => {
+        const sectionElement = document.querySelector(`[data-section-id="${sectionId}"]`);
+        sectionElement?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      });
+      return;
+    }
+  }, [sections]);
+
+  useEffect(() => {
+    const handleFocusLastSection = () => {
+      focusLastSectionEditorAtEnd();
+    };
+
+    window.addEventListener('goonwriter:focus-last-section-end', handleFocusLastSection);
+    return () => {
+      window.removeEventListener('goonwriter:focus-last-section-end', handleFocusLastSection);
+    };
+  }, [focusLastSectionEditorAtEnd]);
+
   const updateScrollMetrics = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
