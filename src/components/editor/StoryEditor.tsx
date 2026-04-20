@@ -59,6 +59,7 @@ function SectionInlineEditor({
   onEditorReady,
   onKeyDown,
   collapseThinkBlocks,
+  onAltClickPosition,
 }: {
   sectionId: string;
   section: StorySection;
@@ -70,6 +71,7 @@ function SectionInlineEditor({
   onEditorReady: (sectionId: string, editor: Editor | null) => void;
   onKeyDown?: (editor: Editor, event: KeyboardEvent) => boolean;
   collapseThinkBlocks: boolean;
+  onAltClickPosition?: (payload: { sectionId: string; charIndex: number; clientX: number; clientY: number }) => void;
 }) {
   const editor = useEditor({
     extensions: [
@@ -106,6 +108,56 @@ function SectionInlineEditor({
           }
         }
         return false;
+      },
+      handleClick: (_view, _pos, event) => {
+        if (!editor || !onAltClickPosition) return false;
+
+        const mouseEvent = event as MouseEvent;
+        if (!mouseEvent.altKey || mouseEvent.button !== 0) return false;
+
+        let clickPos: number | null = null;
+
+        if (typeof document.caretPositionFromPoint === 'function') {
+          const caretPos = document.caretPositionFromPoint(mouseEvent.clientX, mouseEvent.clientY);
+          if (caretPos) {
+            try {
+              clickPos = editor.view.posAtDOM(caretPos.offsetNode, caretPos.offset);
+            } catch {
+              clickPos = null;
+            }
+          }
+        } else if (typeof (document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }).caretRangeFromPoint === 'function') {
+          const caretRange = (document as Document & { caretRangeFromPoint: (x: number, y: number) => Range | null })
+            .caretRangeFromPoint(mouseEvent.clientX, mouseEvent.clientY);
+          if (caretRange) {
+            try {
+              clickPos = editor.view.posAtDOM(caretRange.startContainer, caretRange.startOffset);
+            } catch {
+              clickPos = null;
+            }
+          }
+        }
+
+        if (clickPos == null) {
+          const coordsPos = editor.view.posAtCoords({ left: mouseEvent.clientX, top: mouseEvent.clientY });
+          if (coordsPos) {
+            clickPos = coordsPos.pos;
+          }
+        }
+
+        if (clickPos == null) return false;
+
+        const charIndex = editor.state.doc.textBetween(0, clickPos, '\n\n').length;
+        const lineCoords = editor.view.coordsAtPos(clickPos);
+        onAltClickPosition({
+          sectionId,
+          charIndex,
+          clientX: lineCoords.left,
+          clientY: lineCoords.top,
+        });
+        mouseEvent.preventDefault();
+        mouseEvent.stopPropagation();
+        return true;
       },
     },
   });
@@ -220,6 +272,14 @@ export function StoryEditor() {
   const [completionVisible, setCompletionVisible] = useState(false);
   const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0);
   const [completionPosition, setCompletionPosition] = useState({ top: 0, left: 0 });
+  const [truncateMarker, setTruncateMarker] = useState<{
+    sectionId: string;
+    isThink: boolean;
+    charIndex: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const truncateMarkerButtonRef = useRef<HTMLButtonElement | null>(null);
   const [scrollMetrics, setScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
   const [isScrollbarDragging, setIsScrollbarDragging] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -267,6 +327,13 @@ export function StoryEditor() {
     }
 
     return false;
+  };
+
+  const parseSectionKey = (sectionKey: string) => {
+    if (sectionKey.endsWith(':think')) {
+      return { sectionId: sectionKey.slice(0, -':think'.length), isThink: true };
+    }
+    return { sectionId: sectionKey, isThink: false };
   };
 
   const canDeleteFollowingSections = (sectionId: string) => {
@@ -336,6 +403,82 @@ export function StoryEditor() {
       return next;
     });
   };
+
+  const deleteAfterTextPosition = useCallback(() => {
+    if (!truncateMarker || !selectedStory) return;
+
+    const markerBaseId = truncateMarker.sectionId;
+    const sectionIndex = sections.findIndex((section) => section.id === markerBaseId);
+    if (sectionIndex < 0) {
+      setTruncateMarker(null);
+      return;
+    }
+
+    const targetSection = sections[sectionIndex];
+    const nextSections = sections.slice(0, sectionIndex + 1).map((section) => ({ ...section }));
+    const targetCopy = nextSections[sectionIndex];
+
+    if (truncateMarker.isThink) {
+      const thinking = targetSection.thinkingContent || '';
+      targetCopy.thinkingContent = thinking.slice(0, truncateMarker.charIndex);
+      targetCopy.content = '';
+    } else {
+      targetCopy.content = targetSection.content.slice(0, truncateMarker.charIndex);
+    }
+
+    const keptSectionIds = new Set(nextSections.map((section) => section.id));
+    commitSections(nextSections);
+    setTruncateMarker(null);
+
+    if (
+      activeSectionId
+      && !keptSectionIds.has(activeSectionId)
+      && !keptSectionIds.has(activeSectionId.replace(':think', ''))
+    ) {
+      setActiveSectionId(targetSection.id);
+    }
+
+    if (pendingCaret && !keptSectionIds.has(pendingCaret.sectionId)) {
+      setPendingCaret(null);
+    }
+
+    if (pendingRemoveSectionId && !keptSectionIds.has(pendingRemoveSectionId)) {
+      setPendingRemoveSectionId(null);
+    }
+
+    setExpandedThinkSectionIds((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (keptSectionIds.has(id)) next.add(id);
+      }
+      return next;
+    });
+  }, [activeSectionId, commitSections, pendingCaret, pendingRemoveSectionId, sections, selectedStory, truncateMarker]);
+
+  useEffect(() => {
+    if (!truncateMarker) return;
+
+    const exists = sections.some((section) => section.id === truncateMarker.sectionId);
+    if (!exists) {
+      setTruncateMarker(null);
+    }
+  }, [sections, truncateMarker]);
+
+  useEffect(() => {
+    if (!truncateMarker) return;
+
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (truncateMarkerButtonRef.current?.contains(target)) return;
+      setTruncateMarker(null);
+    };
+
+    document.addEventListener('mousedown', handleDocumentMouseDown);
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentMouseDown);
+    };
+  }, [truncateMarker]);
 
   const toggleThinkCollapsed = (sectionId: string) => {
     setExpandedThinkSectionIds((prev) => {
@@ -1067,6 +1210,16 @@ export function StoryEditor() {
                             onEditorReady={handleEditorReady}
                             onKeyDown={handleCompletionKeyDown}
                             collapseThinkBlocks={false}
+                            onAltClickPosition={({ sectionId, charIndex, clientX, clientY }) => {
+                              const parsed = parseSectionKey(sectionId);
+                              setTruncateMarker({
+                                sectionId: parsed.sectionId,
+                                isThink: parsed.isThink,
+                                charIndex,
+                                x: clientX,
+                                y: clientY,
+                              });
+                            }}
                           />
                         </div>
                       )}
@@ -1090,6 +1243,16 @@ export function StoryEditor() {
                     onEditorReady={handleEditorReady}
                     onKeyDown={handleCompletionKeyDown}
                     collapseThinkBlocks={false}
+                    onAltClickPosition={({ sectionId, charIndex, clientX, clientY }) => {
+                      const parsed = parseSectionKey(sectionId);
+                      setTruncateMarker({
+                        sectionId: parsed.sectionId,
+                        isThink: parsed.isThink,
+                        charIndex,
+                        x: clientX,
+                        y: clientY,
+                      });
+                    }}
                   />
                 </div>
               )}
@@ -1100,6 +1263,20 @@ export function StoryEditor() {
             ))}
           </div>
         </div>
+
+        {truncateMarker && (
+          <button
+            ref={truncateMarkerButtonRef}
+            type="button"
+            onClick={deleteAfterTextPosition}
+            className="fixed z-30 w-5 h-5 rounded-full bg-red-600 text-white text-[10px] leading-none flex items-center justify-center shadow-md hover:bg-red-700 cursor-pointer"
+            style={{ left: truncateMarker.x + 8, top: truncateMarker.y - 24 }}
+            title="Delete all text after this position"
+            aria-label="Delete all text after this position"
+          >
+            ✂
+          </button>
+        )}
 
         <div
           className="absolute top-2 bottom-2 right-1 z-20 w-8 flex items-center justify-center"
