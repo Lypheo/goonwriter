@@ -53,6 +53,7 @@ export interface ModelConfig {
   baseUrl: string;
   token: string;
   modelId: string;
+  chatOnly: boolean;
   disableThinkingPrefill: string;
   instructionTemplate: InstructionTemplate;
   createdAt: number;

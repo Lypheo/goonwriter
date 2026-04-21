@@ -52,6 +52,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     baseUrl: string;
     token: string;
     modelId: string;
+    chatOnly: boolean;
     disableThinkingPrefill: string;
     instructionTemplate: InstructionTemplate;
   }>({
@@ -59,6 +60,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     baseUrl: '',
     token: '',
     modelId: '',
+    chatOnly: false,
     disableThinkingPrefill: '</think>',
     instructionTemplate: { ...defaultInstructionTemplate },
   });
@@ -95,6 +97,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
         baseUrl: '',
         token: '',
         modelId: '',
+        chatOnly: false,
         disableThinkingPrefill: '</think>',
         instructionTemplate: { ...defaultInstructionTemplate },
       });
@@ -114,6 +117,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       baseUrl: model.baseUrl,
       token: model.token,
       modelId: model.modelId,
+      chatOnly: model.chatOnly ?? false,
       disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
       instructionTemplate: { ...model.instructionTemplate },
     });
@@ -146,6 +150,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       baseUrl: 'https://openrouter.ai/api/v1',
       token: '',
       modelId: '',
+      chatOnly: false,
       disableThinkingPrefill: '</think>',
       instructionTemplate: { ...defaultInstructionTemplate },
     });
@@ -378,9 +383,19 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 onChange={(e) => setFormData((prev) => ({ ...prev, disableThinkingPrefill: e.target.value }))}
                 placeholder="</think>"
               />
+
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.chatOnly}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, chatOnly: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <span>Chat Completions Only (forces /chat/completions)</span>
+              </label>
               
               {/* Instruction Template */}
-              <div className="border-t pt-4">
+              <div className={`border-t pt-4 ${formData.chatOnly ? 'opacity-50' : ''}`}>
                 <h4 className="font-medium text-gray-700 mb-3">Instruction Template Tokens</h4>
                 
                 <div className="grid grid-cols-2 gap-4 mb-4">
@@ -390,6 +405,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('systemPromptPrefix', e.target.value)}
                     rows={2}
                     placeholder="<|system|>"
+                    disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="System Prompt Suffix"
@@ -397,6 +413,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('systemPromptSuffix', e.target.value)}
                     rows={2}
                     placeholder="</s>"
+                    disabled={formData.chatOnly}
                   />
                 </div>
                 
@@ -407,6 +424,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('userTagPrefix', e.target.value)}
                     rows={2}
                     placeholder="<|user|>"
+                    disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="User Tag Suffix"
@@ -414,6 +432,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('userTagSuffix', e.target.value)}
                     rows={2}
                     placeholder="</s>"
+                    disabled={formData.chatOnly}
                   />
                 </div>
                 
@@ -424,6 +443,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('assistantTagPrefix', e.target.value)}
                     rows={2}
                     placeholder="<|assistant|>"
+                    disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="Assistant Tag Suffix"
@@ -431,6 +451,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('assistantTagSuffix', e.target.value)}
                     rows={2}
                     placeholder="</s>"
+                    disabled={formData.chatOnly}
                   />
                 </div>
                 
@@ -441,6 +462,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('thinkTagPrefix', e.target.value)}
                     rows={2}
                     placeholder="<think>"
+                    disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="Think Tag Suffix"
@@ -448,12 +470,13 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     onChange={(e) => updateTemplate('thinkTagSuffix', e.target.value)}
                     rows={2}
                     placeholder="</think>"
+                    disabled={formData.chatOnly}
                   />
                 </div>
               </div>
               
               {/* Provider Settings */}
-              <div className="border-t pt-4">
+              <div className={`border-t pt-4 ${formData.chatOnly ? 'opacity-50' : ''}`}>
                 <h4 className="font-medium text-gray-700 mb-3">Provider Settings</h4>
                 
                 <div className="grid grid-cols-2 gap-4 mb-4">
@@ -469,6 +492,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="DeepInfra or DeepInfra, Together"
                     chipClassName="bg-blue-100 text-blue-800"
                     chipRemoveClassName="text-blue-700 hover:text-blue-900"
+                    disabled={formData.chatOnly}
                   />
                   <StringListEditor
                     label="Banned Providers"
@@ -482,6 +506,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="OpenAI or OpenAI, Groq"
                     chipClassName="bg-red-100 text-red-800"
                     chipRemoveClassName="text-red-700 hover:text-red-900"
+                    disabled={formData.chatOnly}
                   />
                 </div>
                 
@@ -498,6 +523,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="fp16 or fp16, int8"
                     chipClassName="bg-purple-100 text-purple-800"
                     chipRemoveClassName="text-purple-700 hover:text-purple-900"
+                    disabled={formData.chatOnly}
                   />
                   <Select
                     label="Sort Order"
@@ -509,6 +535,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                       { value: 'throughput', label: 'Throughput' },
                       { value: 'latency', label: 'Latency' },
                     ]}
+                    disabled={formData.chatOnly}
                   />
                 </div>
               </div>

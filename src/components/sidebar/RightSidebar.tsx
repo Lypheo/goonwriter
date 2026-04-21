@@ -66,6 +66,7 @@ export function RightSidebar() {
   
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
+  const effectiveUseChatCompletion = useChatCompletion || !!selectedModel?.chatOnly;
 
   const parseStreamedAssistantContent = (
     rawChunk: string,
@@ -144,7 +145,7 @@ export function RightSidebar() {
     });
 
     let chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] | null = null;
-    if (useChatCompletion) {
+    if (effectiveUseChatCompletion) {
       chatMessages = storySectionsToChatMessages(workingSections);
       if (!chatMessages.some((message) => message.role === 'user')) {
         alert('Cannot use chat format: at least one user section with content is required.');
@@ -239,7 +240,7 @@ export function RightSidebar() {
     };
     
     try {
-      if (useChatCompletion && chatMessages) {
+      if (effectiveUseChatCompletion && chatMessages) {
         await streamChatCompletion(
           selectedModel,
           chatMessages,
@@ -268,7 +269,7 @@ export function RightSidebar() {
       });
       stopGeneration();
     }
-  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, disableThinking, useChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
+  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
   
   // Ctrl+Enter hotkey for generate/stop
   useEffect(() => {
@@ -430,11 +431,12 @@ export function RightSidebar() {
         >
           <input
             type="checkbox"
-            checked={useChatCompletion}
+            checked={effectiveUseChatCompletion}
             onChange={(e) => setUseChatCompletion(e.target.checked)}
+            disabled={!!selectedModel?.chatOnly}
             className="rounded border-gray-300"
           />
-          <span>Use chat completions</span>
+          <span>Use chat completions{selectedModel?.chatOnly ? ' (forced by model)' : ''}</span>
         </label>
         <label
           className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
@@ -598,7 +600,7 @@ export function RightSidebar() {
           <p className="text-sm text-gray-500">Select a story and model to preview prompt content.</p>
         ) : (
           <div className="space-y-3">
-            {useChatCompletion && (
+            {effectiveUseChatCompletion && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
                 Chat completions mode is enabled. This preview shows the raw <code>/completions</code> prompt format.
               </p>

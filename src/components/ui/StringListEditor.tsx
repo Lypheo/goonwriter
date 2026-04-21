@@ -12,6 +12,7 @@ interface StringListEditorProps {
   placeholder: string;
   chipClassName: string;
   chipRemoveClassName: string;
+  disabled?: boolean;
 }
 
 export function StringListEditor({
@@ -26,6 +27,7 @@ export function StringListEditor({
   placeholder,
   chipClassName,
   chipRemoveClassName,
+  disabled = false,
 }: StringListEditorProps) {
   return (
     <div>
@@ -37,7 +39,7 @@ export function StringListEditor({
             onClick={onCopy}
             className="text-xs text-gray-500 hover:text-gray-700 disabled:opacity-40"
             title="Copy list"
-            disabled={values.length === 0}
+            disabled={values.length === 0 || disabled}
           >
             Copy
           </button>
@@ -53,6 +55,7 @@ export function StringListEditor({
               onClick={() => onRemove(value)}
               className={chipRemoveClassName}
               title={`Remove ${value}`}
+              disabled={disabled}
             >
               ×
             </button>
@@ -70,11 +73,13 @@ export function StringListEditor({
             }
           }}
           placeholder={placeholder}
+          disabled={disabled}
         />
         <button
           type="button"
           onClick={onAdd}
           className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+          disabled={disabled}
         >
           Add
         </button>
