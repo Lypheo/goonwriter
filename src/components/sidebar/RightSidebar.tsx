@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
 import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
 import { createId } from '../../services/id';
-import { Button, Modal, Select, Slider } from '../ui/common';
+import { fetchOpenRouterModelPricing } from '../../services/apiService';
+import { Button, Modal, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
 import { SamplingParams } from './SamplingParams';
@@ -56,9 +57,13 @@ export function RightSidebar() {
   const [showRawPromptModal, setShowRawPromptModal] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
+  const [openRouterPricingByModelId, setOpenRouterPricingByModelId] = useState<Record<string, { prompt: number | null; completion: number | null }>>({});
+  const [openRouterPricingState, setOpenRouterPricingState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const modelDropdownRef = useRef<HTMLDivElement | null>(null);
   
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
@@ -67,6 +72,108 @@ export function RightSidebar() {
   const selectedModel = getSelectedModel();
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
   const effectiveUseChatCompletion = useChatCompletion || !!selectedModel?.chatOnly;
+
+  const extractNumericPrice = (value: unknown): number | null => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const formatPricePerMillion = (pricePerToken: number): string => {
+    const perMillion = pricePerToken * 1_000_000;
+    const fixed = perMillion.toFixed(perMillion >= 1 ? 4 : 6);
+    let normalized = fixed.replace(/\.?0+$/, '');
+
+    if (!normalized.includes('.')) {
+      normalized += '.00';
+    } else if (normalized.split('.')[1].length === 1) {
+      normalized += '0';
+    }
+
+    return `$${normalized}/M`;
+  };
+
+  const isOpenRouterModel = !!selectedModel?.baseUrl && selectedModel.baseUrl.toLowerCase().includes('openrouter.ai');
+  const selectedModelPricing = selectedModel ? openRouterPricingByModelId[selectedModel.id] : undefined;
+
+  useEffect(() => {
+    if (!isModelDropdownOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!modelDropdownRef.current?.contains(event.target as Node)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsModelDropdownOpen(false);
+      }
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isModelDropdownOpen]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadPricing = async () => {
+      const openRouterModels = models.filter(
+        (model) => model.baseUrl?.toLowerCase().includes('openrouter.ai') && model.token && model.modelId
+      );
+
+      if (openRouterModels.length === 0) {
+        setOpenRouterPricingByModelId({});
+        setOpenRouterPricingState('idle');
+        return;
+      }
+
+      setOpenRouterPricingState('loading');
+
+      const pricingEntries = await Promise.all(
+        openRouterModels.map(async (model) => {
+          const pricing = await fetchOpenRouterModelPricing(model.token, model.modelId);
+          if (!pricing) return null;
+          return {
+            modelId: model.id,
+            prompt: extractNumericPrice(pricing.prompt),
+            completion: extractNumericPrice(pricing.completion),
+          };
+        })
+      );
+
+      if (!active) return;
+
+      const nextPricingByModelId: Record<string, { prompt: number | null; completion: number | null }> = {};
+      for (const entry of pricingEntries) {
+        if (!entry) continue;
+        if (entry.prompt === null && entry.completion === null) continue;
+        nextPricingByModelId[entry.modelId] = {
+          prompt: entry.prompt,
+          completion: entry.completion,
+        };
+      }
+
+      setOpenRouterPricingByModelId(nextPricingByModelId);
+      setOpenRouterPricingState(Object.keys(nextPricingByModelId).length > 0 ? 'ready' : 'error');
+    };
+
+    void loadPricing();
+
+    return () => {
+      active = false;
+    };
+  }, [models]);
 
   const parseStreamedAssistantContent = (
     rawChunk: string,
@@ -350,11 +457,33 @@ export function RightSidebar() {
   };
 
   const exportStoryText = getExportStoryText();
-  
-  const modelOptions = [
-    { value: '', label: 'Select a model...' },
-    ...models.map((m) => ({ value: m.id, label: m.name })),
-  ];
+  const sortedModels = [...models].sort((left, right) => {
+    const leftPromptPrice = openRouterPricingByModelId[left.id]?.prompt;
+    const rightPromptPrice = openRouterPricingByModelId[right.id]?.prompt;
+    const leftHasPrice = typeof leftPromptPrice === 'number';
+    const rightHasPrice = typeof rightPromptPrice === 'number';
+
+    if (leftHasPrice && rightHasPrice) {
+      if (leftPromptPrice !== rightPromptPrice) {
+        return leftPromptPrice - rightPromptPrice;
+      }
+      return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+    }
+
+    if (leftHasPrice) return -1;
+    if (rightHasPrice) return 1;
+
+    return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+  });
+
+  const getModelPricingLabel = (modelId: string): string | null => {
+    const pricing = openRouterPricingByModelId[modelId];
+    if (!pricing) return null;
+
+    return `${pricing.prompt !== null ? formatPricePerMillion(pricing.prompt) : 'N/A'} in | ${pricing.completion !== null ? formatPricePerMillion(pricing.completion) : 'N/A'} out`;
+  };
+
+  const selectedModelPricingLabel = selectedModel ? getModelPricingLabel(selectedModel.id) : null;
   
   return (
     <div className="w-72 h-full bg-gray-50 border-l border-gray-200 flex flex-col">
@@ -366,14 +495,72 @@ export function RightSidebar() {
       
       {/* Model Selection */}
       <div className="p-3 border-b border-gray-200">
-        <div className="flex items-end gap-2">
+        <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
+        <div className="flex items-center gap-2">
           <div className="flex-1">
-            <Select
-              label="Model"
-              value={selectedModelId || ''}
-              onChange={(e) => setSelectedModel(e.target.value || null)}
-              options={modelOptions}
-            />
+            <div className="relative" ref={modelDropdownRef}>
+              <button
+                type="button"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm bg-white hover:bg-gray-50 transition-colors text-left"
+                onClick={() => setIsModelDropdownOpen((open) => !open)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className={`truncate ${selectedModel ? 'text-gray-900' : 'text-gray-500'}`}>
+                      {selectedModel ? selectedModel.name : 'Select a model...'}
+                    </p>
+                    {selectedModelPricingLabel && (
+                      <p className="truncate text-[11px] text-gray-500">{selectedModelPricingLabel}</p>
+                    )}
+                  </div>
+                  <svg
+                    className={`w-4 h-4 text-gray-500 transition-transform ${isModelDropdownOpen ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </button>
+
+              {isModelDropdownOpen && (
+                <div className="absolute z-20 mt-1 w-full max-h-300 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedModel(null);
+                      setIsModelDropdownOpen(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 ${!selectedModelId ? 'bg-blue-50 text-blue-800' : 'text-gray-700'}`}
+                  >
+                    Select a model...
+                  </button>
+                  {sortedModels.map((model) => {
+                    const pricingLabel = getModelPricingLabel(model.id);
+                    const isSelected = selectedModelId === model.id;
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModel(model.id);
+                          setIsModelDropdownOpen(false);
+                        }}
+                        className={`w-full px-3 py-2 text-left hover:bg-gray-50 ${isSelected ? 'bg-blue-50 text-blue-800' : 'text-gray-700'}`}
+                      >
+                        <p className="truncate text-sm">{model.name}</p>
+                        {pricingLabel && (
+                          <p className={`truncate text-[11px] ${isSelected ? 'text-blue-700' : 'text-gray-500'}`}>
+                            {pricingLabel}
+                          </p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
           <Button
             variant="ghost"
@@ -394,6 +581,14 @@ export function RightSidebar() {
             >
               Add one
             </button>
+          </p>
+        )}
+
+        {selectedModel && isOpenRouterModel && (
+          <p className="mt-2 text-xs text-gray-500">
+            {openRouterPricingState === 'loading' && 'Loading pricing...'}
+            {openRouterPricingState === 'error' && 'Pricing unavailable'}
+            {openRouterPricingState === 'ready' && !selectedModelPricing && 'Pricing unavailable'}
           </p>
         )}
       </div>

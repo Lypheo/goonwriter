@@ -199,6 +199,11 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     }));
   };
 
+  const encodeNewlinesForDisplay = (value: string | null | undefined): string =>
+    (value ?? '').replace(/\n/g, '\\n');
+  const decodeEscapedNewlines = (value: string | null | undefined): string =>
+    (value ?? '').replace(/\\n/g, '\n');
+
   const addTemplateListValue = (
     field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
     draft: string,
@@ -379,8 +384,8 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
 
               <Input
                 label="Disable Thinking Prefill"
-                value={formData.disableThinkingPrefill}
-                onChange={(e) => setFormData((prev) => ({ ...prev, disableThinkingPrefill: e.target.value }))}
+                value={encodeNewlinesForDisplay(formData.disableThinkingPrefill)}
+                onChange={(e) => setFormData((prev) => ({ ...prev, disableThinkingPrefill: decodeEscapedNewlines(e.target.value) }))}
                 placeholder="</think>"
               />
 
@@ -401,16 +406,16 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <Textarea
                     label="System Prompt Prefix"
-                    value={formData.instructionTemplate.systemPromptPrefix}
-                    onChange={(e) => updateTemplate('systemPromptPrefix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.systemPromptPrefix)}
+                    onChange={(e) => updateTemplate('systemPromptPrefix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="<|system|>"
                     disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="System Prompt Suffix"
-                    value={formData.instructionTemplate.systemPromptSuffix}
-                    onChange={(e) => updateTemplate('systemPromptSuffix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.systemPromptSuffix)}
+                    onChange={(e) => updateTemplate('systemPromptSuffix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="</s>"
                     disabled={formData.chatOnly}
@@ -420,16 +425,16 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <Textarea
                     label="User Tag Prefix"
-                    value={formData.instructionTemplate.userTagPrefix}
-                    onChange={(e) => updateTemplate('userTagPrefix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.userTagPrefix)}
+                    onChange={(e) => updateTemplate('userTagPrefix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="<|user|>"
                     disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="User Tag Suffix"
-                    value={formData.instructionTemplate.userTagSuffix}
-                    onChange={(e) => updateTemplate('userTagSuffix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.userTagSuffix)}
+                    onChange={(e) => updateTemplate('userTagSuffix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="</s>"
                     disabled={formData.chatOnly}
@@ -439,16 +444,16 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <Textarea
                     label="Assistant Tag Prefix"
-                    value={formData.instructionTemplate.assistantTagPrefix}
-                    onChange={(e) => updateTemplate('assistantTagPrefix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.assistantTagPrefix)}
+                    onChange={(e) => updateTemplate('assistantTagPrefix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="<|assistant|>"
                     disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="Assistant Tag Suffix"
-                    value={formData.instructionTemplate.assistantTagSuffix}
-                    onChange={(e) => updateTemplate('assistantTagSuffix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.assistantTagSuffix)}
+                    onChange={(e) => updateTemplate('assistantTagSuffix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="</s>"
                     disabled={formData.chatOnly}
@@ -458,16 +463,16 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                 <div className="grid grid-cols-2 gap-4 mb-4">
                   <Textarea
                     label="Think Tag Prefix"
-                    value={formData.instructionTemplate.thinkTagPrefix}
-                    onChange={(e) => updateTemplate('thinkTagPrefix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.thinkTagPrefix)}
+                    onChange={(e) => updateTemplate('thinkTagPrefix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="<think>"
                     disabled={formData.chatOnly}
                   />
                   <Textarea
                     label="Think Tag Suffix"
-                    value={formData.instructionTemplate.thinkTagSuffix}
-                    onChange={(e) => updateTemplate('thinkTagSuffix', e.target.value)}
+                    value={encodeNewlinesForDisplay(formData.instructionTemplate.thinkTagSuffix)}
+                    onChange={(e) => updateTemplate('thinkTagSuffix', decodeEscapedNewlines(e.target.value))}
                     rows={2}
                     placeholder="</think>"
                     disabled={formData.chatOnly}
