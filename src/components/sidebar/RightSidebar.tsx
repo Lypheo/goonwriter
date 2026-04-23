@@ -58,12 +58,14 @@ export function RightSidebar() {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [modelDropdownMaxHeight, setModelDropdownMaxHeight] = useState(384);
   const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   const [openRouterPricingByModelId, setOpenRouterPricingByModelId] = useState<Record<string, { prompt: number | null; completion: number | null }>>({});
   const [openRouterPricingState, setOpenRouterPricingState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const modelDropdownRef = useRef<HTMLDivElement | null>(null);
+  const modelDropdownButtonRef = useRef<HTMLButtonElement | null>(null);
   
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
@@ -121,6 +123,30 @@ export function RightSidebar() {
     return () => {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isModelDropdownOpen]);
+
+  useEffect(() => {
+    if (!isModelDropdownOpen) return;
+
+    const updateMaxHeight = () => {
+      const triggerRect = modelDropdownButtonRef.current?.getBoundingClientRect();
+      if (!triggerRect) return;
+
+      const viewportBottomPadding = 8;
+      const dropdownTopGap = 4;
+      const availableHeight = Math.floor(window.innerHeight - triggerRect.bottom - dropdownTopGap - viewportBottomPadding);
+
+      setModelDropdownMaxHeight(Math.max(120, availableHeight));
+    };
+
+    updateMaxHeight();
+    window.addEventListener('resize', updateMaxHeight);
+    window.addEventListener('scroll', updateMaxHeight, true);
+
+    return () => {
+      window.removeEventListener('resize', updateMaxHeight);
+      window.removeEventListener('scroll', updateMaxHeight, true);
     };
   }, [isModelDropdownOpen]);
 
@@ -360,7 +386,6 @@ export function RightSidebar() {
         await streamCompletion(
           selectedModel,
           storySectionsToGenerationPrompt(workingSections, {
-            chapterSummaries: selectedStory.chapterSummaries,
             disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
             disableThinking,
           }),
@@ -411,7 +436,6 @@ export function RightSidebar() {
         storySectionsToGenerationPrompt(
           ensureAssistantTail(selectedStory.sections || []).sections,
           {
-            chapterSummaries: selectedStory.chapterSummaries,
             disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
             disableThinking,
           }
@@ -501,6 +525,7 @@ export function RightSidebar() {
             <div className="relative" ref={modelDropdownRef}>
               <button
                 type="button"
+                ref={modelDropdownButtonRef}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm bg-white hover:bg-gray-50 transition-colors text-left"
                 onClick={() => setIsModelDropdownOpen((open) => !open)}
               >
@@ -525,7 +550,10 @@ export function RightSidebar() {
               </button>
 
               {isModelDropdownOpen && (
-                <div className="absolute z-20 mt-1 w-full max-h-300 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg">
+                <div
+                  className="absolute z-20 mt-1 w-full overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg"
+                  style={{ maxHeight: `${modelDropdownMaxHeight}px` }}
+                >
                   <button
                     type="button"
                     onClick={() => {
@@ -740,7 +768,7 @@ export function RightSidebar() {
           </p>
         ) : (
           <>
-            <div className="max-h-32 overflow-y-auto space-y-0.5">
+            <div className="max-h-64 overflow-y-auto space-y-0.5">
               {completionModels.map((m) => (
                 <button
                   key={m.id}

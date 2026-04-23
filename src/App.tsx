@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { LeftSidebar } from './components/sidebar/LeftSidebar';
 import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
-import { ChapterSummariesSidebar } from './components/sidebar/ChapterSummariesSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
@@ -18,13 +17,7 @@ const ContentsIcon = () => (
   </svg>
 );
 
-const NotesIcon = () => (
-  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
-  </svg>
-);
-
-type LeftSidebarView = 'library' | 'contents' | 'summaries';
+type LeftSidebarView = 'library' | 'contents';
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +26,6 @@ function App() {
   const [leftPanelWidths, setLeftPanelWidths] = useState<Record<LeftSidebarView, number>>({
     library: 256,
     contents: 256,
-    summaries: 256,
   });
   const isResizingRef = useRef(false);
   
@@ -156,25 +148,12 @@ function App() {
         >
           <ContentsIcon />
         </button>
-        <button
-          onClick={() => setLeftSidebarView('summaries')}
-          className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${
-            leftSidebarView === 'summaries'
-              ? 'bg-gray-200 text-gray-800'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
-          }`}
-          title="Chapter Summaries"
-          aria-label="Open chapter summaries sidebar"
-        >
-          <NotesIcon />
-        </button>
       </div>
 
       {/* Left Sidebar Panel */}
       <div style={{ width: `${leftPanelWidths[leftSidebarView]}px` }} className="h-full shrink-0">
         {leftSidebarView === 'library' && <LeftSidebar />}
         {leftSidebarView === 'contents' && <ContentsSidebar />}
-        {leftSidebarView === 'summaries' && <ChapterSummariesSidebar />}
       </div>
 
       <div

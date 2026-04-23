@@ -1345,9 +1345,6 @@ export function StoryEditor() {
             <p className="text-xs text-gray-500 mb-3">
               Use <code className="bg-gray-100 px-1 rounded">{'{cursor}'}</code> to mark where cursor should land. Use <code className="bg-gray-100 px-1 rounded">\n</code> for newlines.
             </p>
-            <p className="text-xs text-gray-500 mb-3">
-              Raw prompt placeholders are resolved at generation time: <code className="bg-gray-100 px-1 rounded">{'{summaries}'}</code> inserts all chapter summaries, <code className="bg-gray-100 px-1 rounded">{'{cs}'}</code> inserts the current chapter summary and advances, and <code className="bg-gray-100 px-1 rounded">{'{cn}'}</code> inserts the current chapter number.
-            </p>
             <textarea
               value={templateDraft}
               onChange={(e) => setTemplateDraft(e.target.value)}

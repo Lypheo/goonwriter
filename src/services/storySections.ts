@@ -3,7 +3,6 @@ import type { Story, StorySection, ChatMessage } from '../types';
 import { SPECIAL_TOKENS } from '../types';
 
 interface GenerationPromptOptions {
-  chapterSummaries?: string;
   disableThinkingPrefill?: string;
   disableThinking?: boolean;
 }
@@ -58,33 +57,6 @@ function composeAssistantPromptContent(
   }
 
   return responseContent;
-}
-
-function expandRawPromptPlaceholders(prompt: string, chapterSummaries?: string): string {
-  const summaries = (chapterSummaries || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  const summariesList = summaries
-    .map((summary, index) => `${index + 1}. ${summary}`)
-    .join('\n');
-
-  let currentChapter = 1;
-
-  return prompt.replace(/\{summaries\}|\{cs\}|\{cn\}/g, (match) => {
-    if (match === '{summaries}') {
-      return summariesList;
-    }
-
-    if (match === '{cs}') {
-      const summary = summaries[currentChapter - 1] || '';
-      currentChapter += 1;
-      return summary;
-    }
-
-    return String(currentChapter);
-  });
 }
 
 export function createInitialSections(): StorySection[] {
@@ -225,7 +197,7 @@ export function storySectionsToGenerationPrompt(sections: StorySection[], option
     })
     .join('');
 
-  return expandRawPromptPlaceholders(prompt, options.chapterSummaries);
+  return prompt;
 }
 
 export function deriveFlatStoryContent(sections: StorySection[]): string {
