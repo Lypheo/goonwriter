@@ -280,10 +280,16 @@ export function StoryEditor() {
     y: number;
   } | null>(null);
   const truncateMarkerButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [scrollMetrics, setScrollMetrics] = useState({ scrollTop: 0, scrollHeight: 1, clientHeight: 1 });
+  const [scrollMetrics, setScrollMetrics] = useState({ scrollHeight: 1, clientHeight: 1 });
   const [isScrollbarDragging, setIsScrollbarDragging] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
+  const scrollTopRef = useRef(0);
+  const scrollRafRef = useRef<number | null>(null);
   const sectionEditorsRef = useRef<Map<string, Editor>>(new Map());
+  const sectionsRef = useRef<StorySection[]>([]);
+  const pendingSectionUpdatesRef = useRef<Map<string, Partial<StorySection>>>(new Map());
+  const pendingSectionFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionAbortControllers = useRef<Map<string, AbortController>>(new Map());
   const completionActiveRef = useRef(false);
   const completionItemsRef = useRef<CompletionItem[]>([]);
@@ -295,18 +301,103 @@ export function StoryEditor() {
 
   const sections = useMemo(() => selectedStory?.sections || [], [selectedStory?.sections]);
 
-  const commitSections = (nextSections: StorySection[]) => {
+  useEffect(() => {
+    sectionsRef.current = sections;
+  }, [sections]);
+
+  const commitSections = useCallback((nextSections: StorySection[]) => {
     if (!selectedStory) return;
     updateStory(selectedStory.id, {
       sections: nextSections,
       content: deriveFlatStoryContent(nextSections),
       htmlContent: '',
     });
-  };
+  }, [selectedStory, updateStory]);
+
+  const flushPendingSectionUpdates = useCallback(() => {
+    if (pendingSectionFlushTimeoutRef.current) {
+      clearTimeout(pendingSectionFlushTimeoutRef.current);
+      pendingSectionFlushTimeoutRef.current = null;
+    }
+
+    if (!selectedStory) {
+      pendingSectionUpdatesRef.current.clear();
+      return;
+    }
+
+    const pendingById = pendingSectionUpdatesRef.current;
+    if (pendingById.size === 0) return;
+
+    let hasChanges = false;
+    const nextSections = sectionsRef.current.map((section) => {
+      const updates = pendingById.get(section.id);
+      if (!updates) return section;
+
+      const nextSection: StorySection = { ...section, ...updates };
+      const unchanged =
+        nextSection.content === section.content &&
+        nextSection.thinkingContent === section.thinkingContent &&
+        nextSection.collapsed === section.collapsed;
+
+      if (unchanged) {
+        return section;
+      }
+
+      hasChanges = true;
+      return nextSection;
+    });
+
+    pendingById.clear();
+
+    if (hasChanges) {
+      commitSections(nextSections);
+    }
+  }, [commitSections, selectedStory]);
+
+  const scheduleSectionTextUpdate = useCallback((sectionId: string, updates: Partial<StorySection>) => {
+    const currentSection = sectionsRef.current.find((section) => section.id === sectionId);
+    if (!currentSection) return;
+
+    const existing = pendingSectionUpdatesRef.current.get(sectionId) || {};
+    const merged = { ...existing, ...updates };
+
+    const nextContent = merged.content ?? currentSection.content;
+    const nextThinkingContent = merged.thinkingContent ?? currentSection.thinkingContent;
+    const nextCollapsed = merged.collapsed ?? currentSection.collapsed;
+    const unchanged =
+      nextContent === currentSection.content &&
+      nextThinkingContent === currentSection.thinkingContent &&
+      nextCollapsed === currentSection.collapsed;
+
+    if (unchanged) {
+      pendingSectionUpdatesRef.current.delete(sectionId);
+    } else {
+      pendingSectionUpdatesRef.current.set(sectionId, merged);
+    }
+
+    if (pendingSectionFlushTimeoutRef.current) {
+      clearTimeout(pendingSectionFlushTimeoutRef.current);
+    }
+
+    pendingSectionFlushTimeoutRef.current = setTimeout(() => {
+      flushPendingSectionUpdates();
+    }, 120);
+  }, [flushPendingSectionUpdates]);
 
 
   const updateSection = (sectionId: string, updates: Partial<StorySection>) => {
     if (!selectedStory) return;
+    pendingSectionUpdatesRef.current.delete(sectionId);
+
+    const currentSection = sections.find((section) => section.id === sectionId);
+    if (!currentSection) return;
+
+    const noOp = Object.entries(updates).every(([key, value]) => {
+      const currentValue = currentSection[key as keyof StorySection];
+      return currentValue === value;
+    });
+    if (noOp) return;
+
     const nextSections = sections.map((section) =>
       section.id === sectionId ? { ...section, ...updates } : section
     );
@@ -655,22 +746,69 @@ export function StoryEditor() {
     };
   }, [focusLastSectionEditorAtEnd]);
 
+  const updateScrollbarThumbStyle = useCallback((scrollTop: number, metrics: { scrollHeight: number; clientHeight: number }) => {
+    const thumb = scrollbarThumbRef.current;
+    if (!thumb) return;
+
+    const maxScrollTop = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+    const thumbHeight = maxScrollTop > 0
+      ? Math.max(48, (metrics.clientHeight / metrics.scrollHeight) * metrics.clientHeight)
+      : metrics.clientHeight;
+    const maxThumbTop = Math.max(0, metrics.clientHeight - thumbHeight);
+    const thumbTop = maxScrollTop > 0
+      ? (scrollTop / maxScrollTop) * maxThumbTop
+      : 0;
+
+    thumb.style.height = `${Math.max(24, thumbHeight)}px`;
+    thumb.style.transform = `translateY(${thumbTop}px)`;
+  }, []);
+
+  const scheduleScrollbarThumbUpdate = useCallback((scrollTop: number, metrics: { scrollHeight: number; clientHeight: number }) => {
+    if (scrollRafRef.current != null) {
+      cancelAnimationFrame(scrollRafRef.current);
+    }
+
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      updateScrollbarThumbStyle(scrollTop, metrics);
+    });
+  }, [updateScrollbarThumbStyle]);
+
   const updateScrollMetrics = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    setScrollMetrics({
-      scrollTop: container.scrollTop,
+
+    scrollTopRef.current = container.scrollTop;
+
+    const nextMetrics = {
       scrollHeight: container.scrollHeight,
       clientHeight: container.clientHeight,
+    };
+
+    setScrollMetrics((prev) => {
+      if (
+        prev.scrollHeight === nextMetrics.scrollHeight &&
+        prev.clientHeight === nextMetrics.clientHeight
+      ) {
+        return prev;
+      }
+      return nextMetrics;
     });
-  }, []);
+
+    scheduleScrollbarThumbUpdate(scrollTopRef.current, nextMetrics);
+  }, [scheduleScrollbarThumbUpdate]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const onScroll = () => updateScrollMetrics();
-    onScroll();
+    const onScroll = () => {
+      scrollTopRef.current = container.scrollTop;
+      scheduleScrollbarThumbUpdate(scrollTopRef.current, scrollMetrics);
+    };
+    const onResize = () => updateScrollMetrics();
+
+    updateScrollMetrics();
     container.addEventListener('scroll', onScroll, { passive: true });
 
     const resizeObserver = new ResizeObserver(() => updateScrollMetrics());
@@ -680,23 +818,28 @@ export function StoryEditor() {
       resizeObserver.observe(content);
     }
 
-    window.addEventListener('resize', onScroll);
+    window.addEventListener('resize', onResize);
 
     return () => {
       container.removeEventListener('scroll', onScroll);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('resize', onResize);
+      if (scrollRafRef.current != null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
     };
-  }, [sections, updateScrollMetrics]);
+  }, [scheduleScrollbarThumbUpdate, scrollMetrics, updateScrollMetrics]);
+
+  useEffect(() => {
+    scheduleScrollbarThumbUpdate(scrollTopRef.current, scrollMetrics);
+  }, [scheduleScrollbarThumbUpdate, scrollMetrics]);
 
   const maxScrollTop = Math.max(0, scrollMetrics.scrollHeight - scrollMetrics.clientHeight);
   const thumbHeight = maxScrollTop > 0
     ? Math.max(48, (scrollMetrics.clientHeight / scrollMetrics.scrollHeight) * scrollMetrics.clientHeight)
     : scrollMetrics.clientHeight;
   const maxThumbTop = Math.max(0, scrollMetrics.clientHeight - thumbHeight);
-  const thumbTop = maxScrollTop > 0
-    ? (scrollMetrics.scrollTop / maxScrollTop) * maxThumbTop
-    : 0;
 
   const handleScrollbarTrackMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const container = scrollContainerRef.current;
@@ -944,6 +1087,8 @@ export function StoryEditor() {
   }, [acceptCompletion, cancelCompletions]);
 
   const handleEditorBlur = useCallback((event: FocusEvent | null) => {
+    flushPendingSectionUpdates();
+
     if (!completionActiveRef.current) return;
 
     const nextTarget = (event?.relatedTarget as Node | null) ?? null;
@@ -952,7 +1097,7 @@ export function StoryEditor() {
     if (movedIntoPopup) return;
 
     cancelCompletions({ refocusEditor: !nextTarget });
-  }, [cancelCompletions]);
+  }, [cancelCompletions, flushPendingSectionUpdates]);
 
   useEffect(() => {
     return () => {
@@ -962,7 +1107,14 @@ export function StoryEditor() {
 
   useEffect(() => {
     cancelCompletions();
-  }, [selectedStoryId, cancelCompletions]);
+    flushPendingSectionUpdates();
+  }, [selectedStoryId, cancelCompletions, flushPendingSectionUpdates]);
+
+  useEffect(() => {
+    return () => {
+      flushPendingSectionUpdates();
+    };
+  }, [flushPendingSectionUpdates]);
 
   if (!selectedStory) {
     return (
@@ -1206,7 +1358,7 @@ export function StoryEditor() {
                               setHistoryTick((t) => t + 1);
                             }}
                             onBlur={handleEditorBlur}
-                            onChange={(content) => updateSection(section.id, { thinkingContent: content })}
+                            onChange={(content) => scheduleSectionTextUpdate(section.id, { thinkingContent: content })}
                             onEditorReady={handleEditorReady}
                             onKeyDown={handleCompletionKeyDown}
                             collapseThinkBlocks={false}
@@ -1238,7 +1390,7 @@ export function StoryEditor() {
                       }
                     }}
                     onBlur={handleEditorBlur}
-                    onChange={(content) => updateSection(section.id, { content })}
+                    onChange={(content) => scheduleSectionTextUpdate(section.id, { content })}
                     focusIndex={pendingCaret?.sectionId === section.id ? pendingCaret.index : null}
                     onEditorReady={handleEditorReady}
                     onKeyDown={handleCompletionKeyDown}
@@ -1284,8 +1436,9 @@ export function StoryEditor() {
         >
           <div className="story-custom-scrollbar-track">
             <div
+              ref={scrollbarThumbRef}
               className={`story-custom-scrollbar-thumb ${isScrollbarDragging ? 'is-dragging' : ''}`}
-              style={{ height: `${Math.max(24, thumbHeight)}px`, transform: `translateY(${thumbTop}px)` }}
+              style={{ height: `${Math.max(24, thumbHeight)}px`, transform: 'translateY(0px)' }}
               onMouseDown={handleScrollbarThumbMouseDown}
             />
           </div>
