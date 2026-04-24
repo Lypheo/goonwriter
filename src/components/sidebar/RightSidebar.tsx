@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
 import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
+import { resolveSectionsForGeneration } from '../../services/promptEngineering';
 import { createId } from '../../services/id';
 import { fetchOpenRouterModelPricing } from '../../services/apiService';
 import { Button, Modal, Slider } from '../ui/common';
@@ -49,7 +50,7 @@ export function RightSidebar() {
   } = useModelStore();
   
   const { isGenerating, startGeneration, stopGeneration, setResponseMetadata } = useGenerationStore();
-  const { stories, updateStory } = useDataStore();
+  const { stories, updateStory, applyWritingPlanFromStoryResponse } = useDataStore();
   const { selectedStoryId } = useAppStore();
   
   const [showModelDialog, setShowModelDialog] = useState(false);
@@ -277,9 +278,11 @@ export function RightSidebar() {
       htmlContent: '',
     });
 
+    const generationSections = resolveSectionsForGeneration({ ...selectedStory, sections: workingSections }, stories);
+
     let chatMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] | null = null;
     if (effectiveUseChatCompletion) {
-      chatMessages = storySectionsToChatMessages(workingSections);
+      chatMessages = storySectionsToChatMessages(generationSections);
       if (!chatMessages.some((message) => message.role === 'user')) {
         alert('Cannot use chat format: at least one user section with content is required.');
         return;
@@ -368,6 +371,7 @@ export function RightSidebar() {
             htmlContent: '',
           });
         }
+        applyWritingPlanFromStoryResponse(selectedStory.id, `${assistantBaseContent}${generatedResponse}`);
         stopGeneration();
       },
     };
@@ -385,7 +389,7 @@ export function RightSidebar() {
       } else {
         await streamCompletion(
           selectedModel,
-          storySectionsToGenerationPrompt(workingSections, {
+          storySectionsToGenerationPrompt(generationSections, {
             disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
             disableThinking,
           }),
@@ -401,7 +405,7 @@ export function RightSidebar() {
       });
       stopGeneration();
     }
-  }, [selectedModel, selectedStory, isGenerating, samplingParams, autoThinkTags, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory]);
+  }, [selectedModel, selectedStory, stories, isGenerating, samplingParams, autoThinkTags, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory, applyWritingPlanFromStoryResponse]);
   
   // Ctrl+Enter hotkey for generate/stop
   useEffect(() => {
@@ -434,7 +438,7 @@ export function RightSidebar() {
   const rawPromptPreview = selectedStory && selectedModel
     ? replacePlaceholdersWithModelTokens(
         storySectionsToGenerationPrompt(
-          ensureAssistantTail(selectedStory.sections || []).sections,
+          ensureAssistantTail(resolveSectionsForGeneration(selectedStory, stories)).sections,
           {
             disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
             disableThinking,

@@ -12,8 +12,36 @@ import type { CompletionModelConfig, StorySection } from '../../types';
 import { deriveFlatStoryContent } from '../../services/storySections';
 import { streamSentenceCompletion } from '../../services/llmService';
 import { createId } from '../../services/id';
+import {
+  getLatestValidWritingPlanInStory,
+  getStandaloneVariableToken,
+  getVariableMode,
+  resolveVariableValue,
+} from '../../services/promptEngineering';
 import { CompletionPopup, type CompletionItem } from './CompletionPopup';
-import { StoryDecorations } from './extensions';
+import { StoryDecorations, type EmbeddedPlanEditorConfigMap } from './extensions';
+
+const PLAN_EDITOR_VARIABLE_KEYS = new Set([
+  'plan_summary',
+  'plan_chapters',
+  'plan_full',
+  'plan_chapters_to_current',
+  'current_chapter_outline',
+]);
+
+function extractPlanVariableRefsInOrder(content: string): string[] {
+  const refs: string[] = [];
+  const regex = /\[\[\s*([a-zA-Z0-9_\-.]+)\s*\]\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    const key = match[1];
+    if (!PLAN_EDITOR_VARIABLE_KEYS.has(key)) continue;
+    refs.push(key);
+  }
+
+  return refs;
+}
 
 function createSection(type: StorySection['type'], content = ''): StorySection {
   return {
@@ -60,6 +88,11 @@ function SectionInlineEditor({
   onKeyDown,
   collapseThinkBlocks,
   onAltClickPosition,
+  isReadOnly = false,
+  contentKind = 'normal',
+  embeddedPlanEditors,
+  embeddedPlanEditorsRenderKey,
+  highlightWritingPlanBlock = false,
 }: {
   sectionId: string;
   section: StorySection;
@@ -72,7 +105,17 @@ function SectionInlineEditor({
   onKeyDown?: (editor: Editor, event: KeyboardEvent) => boolean;
   collapseThinkBlocks: boolean;
   onAltClickPosition?: (payload: { sectionId: string; charIndex: number; clientX: number; clientY: number }) => void;
+  isReadOnly?: boolean;
+  contentKind?: 'normal' | 'expanded-mutable' | 'expanded-immutable' | 'unexpanded';
+  embeddedPlanEditors?: EmbeddedPlanEditorConfigMap;
+  embeddedPlanEditorsRenderKey?: string;
+  highlightWritingPlanBlock?: boolean;
 }) {
+  const embeddedPlanEditorsRef = useRef<EmbeddedPlanEditorConfigMap>(embeddedPlanEditors || new Map());
+  useEffect(() => {
+    embeddedPlanEditorsRef.current = embeddedPlanEditors || new Map();
+  }, [embeddedPlanEditors]);
+
   const editor = useEditor({
     extensions: [
       Document,
@@ -85,10 +128,12 @@ function SectionInlineEditor({
       }),
       StoryDecorations.configure({
         collapseThinkBlocks,
+        embeddedPlanEditors: () => embeddedPlanEditorsRef.current,
+        highlightWritingPlanBlock,
       }),
     ],
     content: textToHtml(section.content),
-    editable: !isGenerating,
+    editable: !isGenerating && !isReadOnly,
     onFocus,
     onBlur: ({ event }) => {
       onBlur?.(event as FocusEvent);
@@ -164,8 +209,8 @@ function SectionInlineEditor({
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(!isGenerating);
-  }, [editor, isGenerating]);
+    editor.setEditable(!isGenerating && !isReadOnly);
+  }, [editor, isGenerating, isReadOnly]);
 
   useEffect(() => {
     if (!editor) return;
@@ -174,6 +219,15 @@ function SectionInlineEditor({
       editor.commands.setContent(textToHtml(section.content));
     }
   }, [editor, section.content]);
+
+  useEffect(() => {
+    if (!editor) return;
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dispatch(editor.state.tr.setMeta('storyDecorationsRefresh', embeddedPlanEditorsRenderKey || 'refresh'));
+  }, [editor, embeddedPlanEditorsRenderKey]);
 
   useEffect(() => {
     if (!editor || focusIndex == null) return;
@@ -211,7 +265,7 @@ function SectionInlineEditor({
   return (
     <EditorContent
       editor={editor}
-      className="section-inline-editor"
+      className={`section-inline-editor section-inline-editor-${contentKind}`}
     />
   );
 }
@@ -254,16 +308,18 @@ const roleStyles: Record<StorySection['type'], string> = {
 };
 
 export function StoryEditor() {
-  const { stories, updateStory } = useDataStore();
+  const { stories, updateStory, updateWritingPlanFromVariableEdit } = useDataStore();
   const { selectedStoryId, userCommandTemplate, setUserCommandTemplate } = useAppStore();
   const { isGenerating } = useGenerationStore();
 
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
+  const isChapterChild = !!selectedStory?.parentStoryId;
 
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [templateDraft, setTemplateDraft] = useState('');
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [scrollNavSectionId, setScrollNavSectionId] = useState<string | null>(null);
+  const [collapsedPlanEditors, setCollapsedPlanEditors] = useState<Set<string>>(new Set());
   const [pendingCaret, setPendingCaret] = useState<{ sectionId: string; index: number } | null>(null);
   const [pendingRemoveSectionId, setPendingRemoveSectionId] = useState<string | null>(null);
   const [expandedThinkSectionIds, setExpandedThinkSectionIds] = useState<Set<string>>(new Set());
@@ -301,6 +357,13 @@ export function StoryEditor() {
 
   const sections = useMemo(() => selectedStory?.sections || [], [selectedStory?.sections]);
 
+  const canonicalPlanSectionId = useMemo(() => {
+    if (!selectedStory || isChapterChild) return null;
+    const canonical = getLatestValidWritingPlanInStory(selectedStory);
+    if (!canonical) return null;
+    return selectedStory.sections[canonical.sectionIndex]?.id || null;
+  }, [isChapterChild, selectedStory]);
+
   useEffect(() => {
     sectionsRef.current = sections;
   }, [sections]);
@@ -313,6 +376,29 @@ export function StoryEditor() {
       htmlContent: '',
     });
   }, [selectedStory, updateStory]);
+
+  const getDisplayInfoForContent = useCallback((rawContent: string) => {
+    if (!selectedStory) {
+      return { displayContent: rawContent, mode: 'normal' as const, variableKey: null as string | null };
+    }
+
+    const standaloneVarKey = getStandaloneVariableToken(rawContent);
+    if (!standaloneVarKey) {
+      return { displayContent: rawContent, mode: 'normal' as const, variableKey: null as string | null };
+    }
+
+    const mode = getVariableMode(standaloneVarKey);
+    if (mode === 'unexpanded') {
+      return { displayContent: rawContent, mode: 'unexpanded' as const, variableKey: standaloneVarKey };
+    }
+
+    const resolved = resolveVariableValue(standaloneVarKey, selectedStory, stories);
+    return {
+      displayContent: resolved,
+      mode,
+      variableKey: standaloneVarKey,
+    };
+  }, [selectedStory, stories]);
 
   const flushPendingSectionUpdates = useCallback(() => {
     if (pendingSectionFlushTimeoutRef.current) {
@@ -384,6 +470,26 @@ export function StoryEditor() {
     }, 120);
   }, [flushPendingSectionUpdates]);
 
+  const handleSectionDisplayChange = useCallback((section: StorySection, changedContent: string, target: 'content' | 'thinking') => {
+    const sourceText = target === 'content' ? section.content : (section.thinkingContent || '');
+    const displayInfo = getDisplayInfoForContent(sourceText);
+
+    if (displayInfo.variableKey && displayInfo.mode === 'expanded-mutable' && selectedStory) {
+      updateWritingPlanFromVariableEdit(selectedStory.id, displayInfo.variableKey, changedContent);
+      return;
+    }
+
+    if (displayInfo.variableKey && displayInfo.mode === 'expanded-immutable') {
+      return;
+    }
+
+    if (target === 'content') {
+      scheduleSectionTextUpdate(section.id, { content: changedContent });
+    } else {
+      scheduleSectionTextUpdate(section.id, { thinkingContent: changedContent });
+    }
+  }, [getDisplayInfoForContent, scheduleSectionTextUpdate, selectedStory, updateWritingPlanFromVariableEdit]);
+
 
   const updateSection = (sectionId: string, updates: Partial<StorySection>) => {
     if (!selectedStory) return;
@@ -405,6 +511,7 @@ export function StoryEditor() {
   };
 
   const canRemoveSection = (section: StorySection) => {
+    if (isChapterChild) return false;
     if (section.type === 'system') return false;
 
     if (section.type === 'user') {
@@ -428,6 +535,7 @@ export function StoryEditor() {
   };
 
   const canDeleteFollowingSections = (sectionId: string) => {
+    if (isChapterChild) return false;
     const index = sections.findIndex((section) => section.id === sectionId);
     return index >= 0 && index < sections.length - 1;
   };
@@ -597,7 +705,7 @@ export function StoryEditor() {
   };
 
   const insertUserTurn = useCallback((defaultText = '', afterSectionId?: string) => {
-    if (!selectedStory) return;
+    if (!selectedStory || isChapterChild) return;
 
     const anchorKey = afterSectionId || activeSectionId || undefined;
     const normalizedAnchor = anchorKey?.endsWith(':think') ? anchorKey.slice(0, -':think'.length) : anchorKey;
@@ -611,7 +719,7 @@ export function StoryEditor() {
 
     setActiveSectionId(userSection.id);
     return { userSectionId: userSection.id, assistantSectionId: assistantSection.id };
-  }, [activeSectionId, commitSections, findInsertAnchorIndex, sections, selectedStory]);
+  }, [activeSectionId, commitSections, findInsertAnchorIndex, isChapterChild, sections, selectedStory]);
 
   const resolveTemplate = useCallback(() => {
     const cursorMarker = '{cursor}';
@@ -1174,6 +1282,7 @@ export function StoryEditor() {
               onClick={handleCreateUserTurn}
               className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100"
               title="Create new user section + following assistant section from template"
+              disabled={isChapterChild}
             >
               New User Turn
             </button>
@@ -1232,7 +1341,9 @@ export function StoryEditor() {
                 return (
                   <>
               <div className="px-3 py-2 flex items-center justify-between border-b border-black/10">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">{section.type}</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-700 flex items-center gap-2">
+                  {section.type}
+                </span>
                 <div className="flex items-center gap-2">
                   {collapsible && (
                     <button
@@ -1346,19 +1457,103 @@ export function StoryEditor() {
                         <div className="h-0" aria-hidden="true" />
                       ) : (
                         <div className="px-3 py-2">
+                          {(() => {
+                            const thinkDisplay = getDisplayInfoForContent(section.thinkingContent || '');
+                            return (
                           <SectionInlineEditor
                             sectionId={`${section.id}:think`}
                             section={{
                               ...section,
-                              content: section.thinkingContent || '',
+                              content: thinkDisplay.displayContent,
                             }}
                             isGenerating={isGenerating}
+                            isReadOnly={thinkDisplay.mode === 'expanded-immutable'}
+                            contentKind={thinkDisplay.mode}
                             onFocus={() => {
                               setActiveSectionId(`${section.id}:think`);
                               setHistoryTick((t) => t + 1);
                             }}
                             onBlur={handleEditorBlur}
-                            onChange={(content) => scheduleSectionTextUpdate(section.id, { thinkingContent: content })}
+                            onChange={(content) => handleSectionDisplayChange(section, content, 'thinking')}
+                            onEditorReady={handleEditorReady}
+                            onKeyDown={handleCompletionKeyDown}
+                            collapseThinkBlocks={false}
+                            onAltClickPosition={({ sectionId, charIndex, clientX, clientY }) => {
+                              const parsed = parseSectionKey(sectionId);
+                              setTruncateMarker({
+                                sectionId: parsed.sectionId,
+                                isThink: parsed.isThink,
+                                charIndex,
+                                x: clientX,
+                                y: clientY,
+                              });
+                            }}
+                          />
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(() => {
+                    const mainDisplay = getDisplayInfoForContent(section.content);
+                    const embeddedPlanEditors: EmbeddedPlanEditorConfigMap =
+                      isChapterChild && selectedStory
+                        ? new Map(
+                            extractPlanVariableRefsInOrder(section.content || '').map((variableKey) => [
+                              variableKey,
+                              {
+                                variableKey,
+                                value: resolveVariableValue(variableKey, selectedStory, stories),
+                                collapsed: collapsedPlanEditors.has(`${section.id}:${variableKey}`),
+                                onToggle: () => {
+                                  const panelKey = `${section.id}:${variableKey}`;
+                                  setCollapsedPlanEditors((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(panelKey)) {
+                                      next.delete(panelKey);
+                                    } else {
+                                      next.add(panelKey);
+                                    }
+                                    return next;
+                                  });
+                                },
+                                onChange: (nextValue: string) => {
+                                  updateWritingPlanFromVariableEdit(selectedStory.id, variableKey, nextValue);
+                                },
+                              },
+                            ])
+                          )
+                        : new Map();
+                    const embeddedPlanEditorsRenderKey =
+                      isChapterChild && selectedStory
+                        ? extractPlanVariableRefsInOrder(section.content || '')
+                            .map((variableKey) => `${variableKey}:${collapsedPlanEditors.has(`${section.id}:${variableKey}`) ? '1' : '0'}`)
+                            .join('|')
+                        : '';
+                    return (
+                      <>
+                        <div>
+                          <SectionInlineEditor
+                            sectionId={section.id}
+                            section={{ ...section, content: mainDisplay.displayContent }}
+                            isGenerating={isGenerating}
+                            isReadOnly={mainDisplay.mode === 'expanded-immutable'}
+                            contentKind={mainDisplay.mode}
+                            embeddedPlanEditors={embeddedPlanEditors}
+                            embeddedPlanEditorsRenderKey={embeddedPlanEditorsRenderKey}
+                            highlightWritingPlanBlock={!isChapterChild && canonicalPlanSectionId === section.id}
+                            onFocus={() => {
+                              setActiveSectionId(section.id);
+                              setHistoryTick((t) => t + 1);
+                              if (pendingCaret?.sectionId === section.id) {
+                                setPendingCaret(null);
+                              }
+                            }}
+                            onBlur={handleEditorBlur}
+                            onChange={(content) => handleSectionDisplayChange(section, content, 'content')}
+                            focusIndex={pendingCaret?.sectionId === section.id ? pendingCaret.index : null}
                             onEditorReady={handleEditorReady}
                             onKeyDown={handleCompletionKeyDown}
                             collapseThinkBlocks={false}
@@ -1374,38 +1569,9 @@ export function StoryEditor() {
                             }}
                           />
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  <SectionInlineEditor
-                    sectionId={section.id}
-                    section={section}
-                    isGenerating={isGenerating}
-                    onFocus={() => {
-                      setActiveSectionId(section.id);
-                      setHistoryTick((t) => t + 1);
-                      if (pendingCaret?.sectionId === section.id) {
-                        setPendingCaret(null);
-                      }
-                    }}
-                    onBlur={handleEditorBlur}
-                    onChange={(content) => scheduleSectionTextUpdate(section.id, { content })}
-                    focusIndex={pendingCaret?.sectionId === section.id ? pendingCaret.index : null}
-                    onEditorReady={handleEditorReady}
-                    onKeyDown={handleCompletionKeyDown}
-                    collapseThinkBlocks={false}
-                    onAltClickPosition={({ sectionId, charIndex, clientX, clientY }) => {
-                      const parsed = parseSectionKey(sectionId);
-                      setTruncateMarker({
-                        sectionId: parsed.sectionId,
-                        isThink: parsed.isThink,
-                        charIndex,
-                        x: clientX,
-                        y: clientY,
-                      });
-                    }}
-                  />
+                      </>
+                    );
+                  })()}
                 </div>
               )}
                   </>
@@ -1476,7 +1642,7 @@ export function StoryEditor() {
         <div>
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-gray-400"></span>
-            Structured story sections enabled
+            {isChapterChild ? 'Chapter child mode: fixed 3-section structure' : 'Structured story sections enabled'}
           </span>
         </div>
         <div className="flex items-center gap-3">

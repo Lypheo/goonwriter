@@ -121,6 +121,105 @@
   color: #9ca3af;
 }
 
+.section-inline-editor .md-placeholder-token,
+.section-collapsed-markdown .md-placeholder-token {
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.section-inline-editor .md-variable-token-mutable,
+.section-collapsed-markdown .md-variable-token-mutable {
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.section-inline-editor .md-variable-token-immutable,
+.section-collapsed-markdown .md-variable-token-immutable {
+  background: #e5e7eb;
+  color: #4b5563;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.section-inline-editor .md-variable-token-unexpanded,
+.section-collapsed-markdown .md-variable-token-unexpanded {
+  background: #f3e8ff;
+  color: #6b21a8;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.section-inline-editor .md-writing-plan-canonical {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(59, 130, 246, 0.55);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
+.section-inline-editor-expanded-mutable .ProseMirror {
+  background: #ecfeff;
+}
+
+.section-inline-editor-expanded-immutable .ProseMirror {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.section-inline-editor-unexpanded .ProseMirror {
+  background: #faf5ff;
+}
+
+.section-inline-editor .embedded-plan-widget {
+  display: block;
+  margin: 0.2rem 0 0.2rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.section-inline-editor .embedded-plan-widget-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 1.5rem;
+  border: 0;
+  border-bottom: 1px solid #bfdbfe;
+  background: #f0f9ff;
+  color: #1d4ed8;
+  padding: 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.section-inline-editor .embedded-plan-widget-header:hover {
+  background: #e0f2fe;
+}
+
+.section-inline-editor .embedded-plan-widget-textarea {
+  display: block;
+  width: 100%;
+  min-height: 7rem;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+  color: #1f2937;
+  background: #ffffff;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 18px;

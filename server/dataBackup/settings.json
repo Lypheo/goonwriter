@@ -1,0 +1,14 @@
+{
+  "selectedModelId": "f9e7c5cc-7207-4801-a039-c6f1363d3651",
+  "samplingParams": {
+    "temperature": 0.7,
+    "top_p": 1,
+    "top_k": 0,
+    "frequency_penalty": 0,
+    "presence_penalty": 0,
+    "repetition_penalty": 1,
+    "min_p": 0,
+    "top_a": 0,
+    "max_tokens": 797
+  }
+}

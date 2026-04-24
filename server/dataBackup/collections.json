@@ -1,0 +1,65 @@
+[
+  {
+    "id": "1cfeb372-2a22-4307-a2e3-013d2167872d",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "Deepseek",
+    "createdAt": 1770941192602,
+    "updatedAt": 1771543868253
+  },
+  {
+    "id": "cb01f082-5ce5-4e41-9ce8-b26e8aa9aab5",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "GLM-5",
+    "createdAt": 1771541887978,
+    "updatedAt": 1771541887978
+  },
+  {
+    "id": "092a4d40-d18d-413d-9380-f7cc034a5f16",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "propietary",
+    "createdAt": 1771597852485,
+    "updatedAt": 1771597852485
+  },
+  {
+    "id": "f48b5218-3e49-4293-95a4-018a449c1cbf",
+    "groupId": "5ae19a02-096c-49ac-bb16-a740f66a4f49",
+    "name": "GLM",
+    "createdAt": 1771602858487,
+    "updatedAt": 1771602858487
+  },
+  {
+    "id": "6ddf2441-46d8-46d7-88c4-013bda6dbcf4",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "other",
+    "createdAt": 1773064085268,
+    "updatedAt": 1773064085268
+  },
+  {
+    "id": "3569036c-eb61-4c20-964f-5a641dd86c09",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "Tamanoi",
+    "createdAt": 1775142641243,
+    "updatedAt": 1775142641243
+  },
+  {
+    "id": "ab407da3-65ff-445c-9e2d-8e4be1c95bc4",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "test",
+    "createdAt": 1775490322283,
+    "updatedAt": 1775490322283
+  },
+  {
+    "id": "0e84f313-c31d-4396-9f9e-d9734d36d4f0",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "Emily",
+    "createdAt": 1775493909116,
+    "updatedAt": 1775493909116
+  },
+  {
+    "id": "fa54d00e-209d-4a95-bcbd-ef2d70f13ea5",
+    "groupId": "93506d38-1958-4785-b7d0-59584034e125",
+    "name": "Creative",
+    "createdAt": 1776617368872,
+    "updatedAt": 1776617368872
+  }
+]

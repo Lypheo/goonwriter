@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { LeftSidebar } from './components/sidebar/LeftSidebar';
 import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
+import { PromptEngineeringSidebar } from './components/sidebar/PromptEngineeringSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
 
 const LEFT_PANEL_WIDTH_STORAGE_KEY = 'goonwriter:leftPanelWidth';
 const LIBRARY_PANEL_HEIGHT_STORAGE_KEY = 'goonwriter:libraryPanelHeight';
+const LEFT_PANEL_MODE_STORAGE_KEY = 'goonwriter:leftPanelMode';
+
+type LeftPanelMode = 'workspace' | 'prompt';
 
 function readStoredNumber(key: string, fallback: number): number {
   if (typeof window === 'undefined') return fallback;
@@ -18,11 +22,19 @@ function readStoredNumber(key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readStoredMode(): LeftPanelMode {
+  if (typeof window === 'undefined') return 'workspace';
+
+  const raw = window.localStorage.getItem(LEFT_PANEL_MODE_STORAGE_KEY);
+  return raw === 'prompt' ? 'prompt' : 'workspace';
+}
+
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => readStoredNumber(LEFT_PANEL_WIDTH_STORAGE_KEY, 540));
   const [libraryPanelHeight, setLibraryPanelHeight] = useState(() => readStoredNumber(LIBRARY_PANEL_HEIGHT_STORAGE_KEY, 420));
+  const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>(() => readStoredMode());
   const isResizingOuterRef = useRef(false);
   const isResizingInnerRef = useRef(false);
   
@@ -64,6 +76,11 @@ function App() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(LIBRARY_PANEL_HEIGHT_STORAGE_KEY, String(libraryPanelHeight));
   }, [libraryPanelHeight]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LEFT_PANEL_MODE_STORAGE_KEY, leftPanelMode);
+  }, [leftPanelMode]);
   
   if (isLoading) {
     return (
@@ -161,22 +178,49 @@ function App() {
     <div className="h-screen flex overflow-hidden bg-white">
       {/* Left Sidebar Panel */}
       <div style={{ width: `${leftPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0">
-        <div style={{ height: `${libraryPanelHeight}px` }} className="shrink-0 min-h-0">
-          <LeftSidebar />
+        <div className="shrink-0 border-b border-gray-200 bg-gray-50 px-2 py-1.5">
+          <div className="inline-flex rounded-md border border-gray-300 bg-white overflow-hidden">
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-xs ${leftPanelMode === 'workspace' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              onClick={() => setLeftPanelMode('workspace')}
+            >
+              Library + Contents
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-1.5 text-xs border-l border-gray-300 ${leftPanelMode === 'prompt' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+              onClick={() => setLeftPanelMode('prompt')}
+            >
+              Story Blueprint
+            </button>
+          </div>
         </div>
 
-        <div
-          className="h-3 w-full cursor-row-resize relative group"
-          onMouseDown={startInnerPanelResize}
-          title="Resize library/contents split"
-        >
-          <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1.5 w-10 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
-        </div>
+        {leftPanelMode === 'workspace' ? (
+          <>
+            <div style={{ height: `${libraryPanelHeight}px` }} className="shrink-0 min-h-0">
+              <LeftSidebar />
+            </div>
 
-        <div className="min-h-0 flex-1">
-          <ContentsSidebar />
-        </div>
+            <div
+              className="h-3 w-full cursor-row-resize relative group"
+              onMouseDown={startInnerPanelResize}
+              title="Resize library/contents split"
+            >
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1.5 w-10 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
+            </div>
+
+            <div className="min-h-0 flex-1">
+              <ContentsSidebar />
+            </div>
+          </>
+        ) : (
+          <div className="min-h-0 flex-1">
+            <PromptEngineeringSidebar />
+          </div>
+        )}
       </div>
 
       <div

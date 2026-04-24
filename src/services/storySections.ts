@@ -2,6 +2,18 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Story, StorySection, ChatMessage } from '../types';
 import { SPECIAL_TOKENS } from '../types';
 
+export const DEFAULT_CHILD_PROMPT_TEMPLATE = [
+  'Write Chapter [[current_chapter_number]] of the story.',
+  '',
+  'Use this chapter outline:',
+  '[[current_chapter_outline]]',
+  '',
+  'Story so far:',
+  '[[story_so_far]]',
+].join('\n');
+
+export const DEFAULT_CHILD_RESPONSE_TEMPLATE = '';
+
 interface GenerationPromptOptions {
   disableThinkingPrefill?: string;
   disableThinking?: boolean;
@@ -213,6 +225,17 @@ export function normalizeStory(story: Story): Story {
   return {
     ...story,
     sections,
+    parentStoryId: story.parentStoryId ?? null,
+    chapterNumber: story.chapterNumber ?? null,
+    chapterTitle: story.chapterTitle || '',
+    writingPlan: story.writingPlan ?? null,
+    promptPlaceholders: (story.promptPlaceholders || []).map((placeholder) => ({
+      ...placeholder,
+      collapsed: placeholder.collapsed ?? false,
+      editorHeight: placeholder.editorHeight ?? 96,
+    })),
+    childPromptTemplate: story.childPromptTemplate ?? DEFAULT_CHILD_PROMPT_TEMPLATE,
+    childResponseTemplate: story.childResponseTemplate ?? DEFAULT_CHILD_RESPONSE_TEMPLATE,
     content: deriveFlatStoryContent(sections),
     htmlContent: story.htmlContent || '',
   };

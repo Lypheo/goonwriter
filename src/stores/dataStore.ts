@@ -4,6 +4,12 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
 import { fetchData, saveData } from '../services/apiService';
 import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
+import {
+  applyMutableVariableEdit,
+  getLatestValidWritingPlanInStory,
+  parseWritingPlanFromText,
+  replaceWritingPlanInText,
+} from '../services/promptEngineering';
 
 interface DataState {
   groups: Group[];
@@ -30,6 +36,9 @@ interface DataState {
   updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => void;
   deleteStory: (id: string) => void;
   duplicateStory: (id: string) => Story | null;
+  updateStoryPromptConfig: (storyId: string, updates: Partial<Pick<Story, 'promptPlaceholders' | 'childPromptTemplate' | 'childResponseTemplate' | 'writingPlan'>>) => void;
+  applyWritingPlanFromStoryResponse: (storyId: string, assistantContent: string) => void;
+  updateWritingPlanFromVariableEdit: (storyId: string, variableKey: string, value: string) => void;
   
   // Helpers
   getStoriesByCollection: (collectionId: string) => Story[];
@@ -61,6 +70,80 @@ const debouncedSaveAppState = (appState: { selectedStoryId: string | null; userC
   if (saveAppStateTimeout) clearTimeout(saveAppStateTimeout);
   saveAppStateTimeout = setTimeout(() => saveData('appState', appState), 500);
 };
+
+function syncPlanChildren(stories: Story[], parentStory: Story, now: number): Story[] {
+  const canonicalSource = getLatestValidWritingPlanInStory(parentStory);
+  if (!canonicalSource) {
+    return stories;
+  }
+  const plan = canonicalSource.plan;
+
+  const currentStories = stories.map((story) => ({ ...story }));
+  const existingChildren = currentStories.filter((story) => story.parentStoryId === parentStory.id);
+  const byChapter = new Map(existingChildren.map((story) => [story.chapterNumber || 0, story]));
+
+  const upsertedChildren: Story[] = [];
+
+  for (const chapter of plan.chapters) {
+    const existingChild = byChapter.get(chapter.chapterNumber);
+    const systemContent = parentStory.sections.find((section) => section.type === 'system')?.content || '';
+
+    if (existingChild) {
+      const systemSection = existingChild.sections.find((section) => section.type === 'system')
+        || { id: uuidv4(), type: 'system' as const, content: '', thinkingContent: '', collapsed: false };
+      const userSection = existingChild.sections.find((section) => section.type === 'user')
+        || { id: uuidv4(), type: 'user' as const, content: parentStory.childPromptTemplate || '', thinkingContent: '', collapsed: false };
+      const assistantSection = existingChild.sections.find((section) => section.type === 'assistant')
+        || { id: uuidv4(), type: 'assistant' as const, content: parentStory.childResponseTemplate || '', thinkingContent: '', collapsed: false };
+
+      const sections = [
+        { ...systemSection, content: systemContent },
+        userSection,
+        assistantSection,
+      ];
+
+      upsertedChildren.push({
+        ...existingChild,
+        name: `${parentStory.name} - Chapter ${chapter.chapterNumber}`,
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.title,
+        sections,
+        content: deriveFlatStoryContent(sections),
+        updatedAt: now,
+      });
+      continue;
+    }
+
+    const sections = [
+      { id: uuidv4(), type: 'system' as const, content: systemContent, thinkingContent: '', collapsed: false },
+      { id: uuidv4(), type: 'user' as const, content: parentStory.childPromptTemplate || '', thinkingContent: '', collapsed: false },
+      { id: uuidv4(), type: 'assistant' as const, content: parentStory.childResponseTemplate || '', thinkingContent: '', collapsed: false },
+    ];
+
+    upsertedChildren.push({
+      id: uuidv4(),
+      collectionId: parentStory.collectionId,
+      name: `${parentStory.name} - Chapter ${chapter.chapterNumber}`,
+      parentStoryId: parentStory.id,
+      chapterNumber: chapter.chapterNumber,
+      chapterTitle: chapter.title,
+      writingPlan: null,
+      promptPlaceholders: [],
+      childPromptTemplate: '',
+      childResponseTemplate: '',
+      sections,
+      content: deriveFlatStoryContent(sections),
+      htmlContent: '',
+      totalCost: 0,
+      totalTokens: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const retained = currentStories.filter((story) => story.parentStoryId !== parentStory.id);
+  return [...retained, ...upsertedChildren];
+}
 
 export const useDataStore = create<DataState>()(
   subscribeWithSelector(
@@ -215,7 +298,7 @@ export const useDataStore = create<DataState>()(
       
       updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => {
         set((state) => {
-          const newStories = state.stories.map((s) =>
+          const mappedStories = state.stories.map((s) =>
             s.id === id
               ? {
                   ...s,
@@ -230,6 +313,11 @@ export const useDataStore = create<DataState>()(
                 }
               : s
           );
+          const updatedStory = mappedStories.find((story) => story.id === id);
+          const shouldSyncChildren = !!updates.sections && !!updatedStory && !updatedStory.parentStoryId && !!getLatestValidWritingPlanInStory(updatedStory);
+          const newStories = shouldSyncChildren
+            ? syncPlanChildren(mappedStories, updatedStory as Story, Date.now())
+            : mappedStories;
           debouncedSaveStories(newStories);
           return { stories: newStories };
         });
@@ -237,7 +325,20 @@ export const useDataStore = create<DataState>()(
       
       deleteStory: (id: string) => {
         set((state) => {
-          const newStories = state.stories.filter((s) => s.id !== id);
+          const queue = [id];
+          const removeSet = new Set<string>();
+
+          while (queue.length > 0) {
+            const currentId = queue.pop();
+            if (!currentId || removeSet.has(currentId)) continue;
+            removeSet.add(currentId);
+
+            state.stories
+              .filter((story) => story.parentStoryId === currentId)
+              .forEach((child) => queue.push(child.id));
+          }
+
+          const newStories = state.stories.filter((s) => !removeSet.has(s.id));
           debouncedSaveStories(newStories);
           return { stories: newStories };
         });
@@ -270,6 +371,105 @@ export const useDataStore = create<DataState>()(
           return { stories: newStories };
         });
         return duplicated;
+      },
+
+      updateStoryPromptConfig: (storyId: string, updates: Partial<Pick<Story, 'promptPlaceholders' | 'childPromptTemplate' | 'childResponseTemplate' | 'writingPlan'>>) => {
+        set((state) => {
+          const now = Date.now();
+          const mappedStories = state.stories.map((story) => {
+            if (story.id !== storyId) return story;
+            return {
+              ...story,
+              ...updates,
+              updatedAt: now,
+            };
+          });
+
+          const updatedParent = mappedStories.find((story) => story.id === storyId);
+          const newStories = updatedParent && !updatedParent.parentStoryId && updates.writingPlan
+            ? syncPlanChildren(mappedStories, updatedParent, now)
+            : mappedStories;
+
+          debouncedSaveStories(newStories);
+          return { stories: newStories };
+        });
+      },
+
+      applyWritingPlanFromStoryResponse: (storyId: string, assistantContent: string) => {
+        set((state) => {
+          const parentStory = state.stories.find((story) => story.id === storyId);
+          if (!parentStory || parentStory.parentStoryId) return state;
+
+          const parsedPlan = parseWritingPlanFromText(assistantContent);
+          if (!parsedPlan) return state;
+
+          const now = Date.now();
+          const mappedStories = state.stories.map((story) => (
+            story.id === parentStory.id
+              ? { ...story, updatedAt: now }
+              : story
+          ));
+          const refreshedParent = mappedStories.find((story) => story.id === parentStory.id);
+          const newStories = refreshedParent
+            ? syncPlanChildren(mappedStories, refreshedParent, now)
+            : mappedStories;
+
+          debouncedSaveStories(newStories);
+          return { stories: newStories };
+        });
+      },
+
+      updateWritingPlanFromVariableEdit: (storyId: string, variableKey: string, value: string) => {
+        set((state) => {
+          const sourceStory = state.stories.find((story) => story.id === storyId);
+          if (!sourceStory) return state;
+
+          const parentStory = sourceStory.parentStoryId
+            ? state.stories.find((story) => story.id === sourceStory.parentStoryId)
+            : sourceStory;
+          if (!parentStory) return state;
+
+          const canonicalSource = getLatestValidWritingPlanInStory(parentStory);
+          if (!canonicalSource) return state;
+
+          const nextPlan = applyMutableVariableEdit(
+            canonicalSource.plan,
+            variableKey,
+            value,
+            sourceStory.chapterNumber
+          );
+          if (!nextPlan) return state;
+
+          const canonicalSection = parentStory.sections[canonicalSource.sectionIndex];
+          if (!canonicalSection || canonicalSection.type !== 'assistant') return state;
+
+          const updatedCanonicalText = replaceWritingPlanInText(canonicalSection.content || '', nextPlan);
+          const updatedSections = parentStory.sections.map((section, index) => (
+            index === canonicalSource.sectionIndex
+              ? { ...section, content: updatedCanonicalText }
+              : section
+          ));
+
+          const newStories = state.stories.map((story) => (
+            story.id === parentStory.id
+              ? {
+                ...story,
+                sections: updatedSections,
+                content: deriveFlatStoryContent(updatedSections),
+                htmlContent: '',
+                updatedAt: Date.now(),
+              }
+              : story
+          ));
+
+          const refreshedParent = newStories.find((story) => story.id === parentStory.id);
+          const syncedStories = refreshedParent
+            ? syncPlanChildren(newStories, refreshedParent, Date.now())
+            : newStories;
+
+          debouncedSaveStories(syncedStories);
+          return { stories: syncedStories };
+        });
       },
       
       // Helpers

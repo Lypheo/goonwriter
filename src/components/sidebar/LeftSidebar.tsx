@@ -196,15 +196,23 @@ export function LeftSidebar() {
           }
           break;
         case 'story':
+          {
+            const selectedStory = stories.find((story) => story.id === selectedStoryId);
+            const selectedStoryRemoved = selectedStory
+              ? selectedStory.id === deleteConfirm.id || selectedStory.parentStoryId === deleteConfirm.id
+              : false;
           deleteStory(deleteConfirm.id);
-          if (selectedStoryId === deleteConfirm.id) {
+          if (selectedStoryRemoved) {
             setSelectedStory(null);
           }
           break;
+          }
       }
       setDeleteConfirm(null);
     }
   };
+
+  const selectedStory = stories.find((story) => story.id === selectedStoryId) || null;
   
   const handleDuplicate = (storyId: string) => {
     const duplicated = duplicateStory(storyId);
@@ -298,7 +306,9 @@ export function LeftSidebar() {
                 {isGroupExpanded && (
                   <div className="ml-4">
                     {groupCollections.map((collection) => {
-                      const collectionStories = stories.filter((s) => s.collectionId === collection.id);
+                      const rootStories = stories
+                        .filter((s) => s.collectionId === collection.id && !s.parentStoryId)
+                        .sort((left, right) => left.createdAt - right.createdAt);
                       const isCollectionExpanded = expandedCollections.has(collection.id);
                       
                       return (
@@ -364,55 +374,85 @@ export function LeftSidebar() {
                           {/* Stories */}
                           {isCollectionExpanded && (
                             <div className="ml-4">
-                              {collectionStories.map((story) => (
-                                <div
-                                  key={story.id}
-                                  className={`group flex items-center gap-1 p-1.5 rounded cursor-pointer hover:bg-gray-200 ${
-                                    selectedStoryId === story.id ? 'bg-blue-100' : ''
-                                  }`}
-                                  onClick={() => setSelectedStory(story.id)}                                draggable={true}
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData('text/plain', story.id);
-                                  e.dataTransfer.effectAllowed = 'move';
-                                }}                                >
-                                  <DocumentIcon />
-                                  <span className="flex-1 text-sm truncate">{story.name}</span>
-                                  <div className="hidden group-hover:flex items-center gap-0.5">
-                                    <button
-                                      className="p-1 hover:bg-blue-200 text-blue-600 rounded"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDuplicate(story.id);
-                                      }}
-                                      title="Duplicate"
-                                    >
-                                      <DuplicateIcon />
-                                    </button>
-                                    <button
-                                      className="p-1 hover:bg-gray-300 rounded"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingItem({ type: 'story', id: story.id, name: story.name });
-                                        setNewItemName(story.name);
-                                      }}
-                                      title="Edit"
-                                    >
-                                      <EditIcon />
-                                    </button>
-                                    <button
-                                      className="p-1 hover:bg-red-100 text-red-600 rounded"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteConfirm({ type: 'story', id: story.id, name: story.name });
-                                      }}
-                                      title="Delete"
-                                    >
-                                      <TrashIcon />
-                                    </button>
+                              {rootStories.map((story) => {
+                                const childStories = stories
+                                  .filter((candidate) => candidate.parentStoryId === story.id)
+                                  .sort((left, right) => (left.chapterNumber || 0) - (right.chapterNumber || 0));
+                                const shouldShowChildren = selectedStoryId === story.id || selectedStory?.parentStoryId === story.id;
+
+                                return (
+                                  <div key={story.id}>
+                                    <div
+                                      className={`group flex items-center gap-1 p-1.5 rounded cursor-pointer hover:bg-gray-200 ${
+                                        selectedStoryId === story.id ? 'bg-blue-100' : ''
+                                      }`}
+                                      onClick={() => setSelectedStory(story.id)}                                draggable={true}
+                                      onDragStart={(e) => {
+                                        e.dataTransfer.setData('text/plain', story.id);
+                                        e.dataTransfer.effectAllowed = 'move';
+                                      }}                                >
+                                      <DocumentIcon />
+                                      <span className="flex-1 text-sm truncate">{story.name}</span>
+                                      {childStories.length > 0 && (
+                                        <span className="text-[10px] text-gray-500 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200">
+                                          {childStories.length} ch
+                                        </span>
+                                      )}
+                                      <div className="hidden group-hover:flex items-center gap-0.5">
+                                        <button
+                                          className="p-1 hover:bg-blue-200 text-blue-600 rounded"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDuplicate(story.id);
+                                          }}
+                                          title="Duplicate"
+                                        >
+                                          <DuplicateIcon />
+                                        </button>
+                                        <button
+                                          className="p-1 hover:bg-gray-300 rounded"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingItem({ type: 'story', id: story.id, name: story.name });
+                                            setNewItemName(story.name);
+                                          }}
+                                          title="Edit"
+                                        >
+                                          <EditIcon />
+                                        </button>
+                                        <button
+                                          className="p-1 hover:bg-red-100 text-red-600 rounded"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDeleteConfirm({ type: 'story', id: story.id, name: story.name });
+                                          }}
+                                          title="Delete"
+                                        >
+                                          <TrashIcon />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {shouldShowChildren && childStories.length > 0 && (
+                                      <div className="ml-5 space-y-0.5 mb-1">
+                                        {childStories.map((child) => (
+                                          <button
+                                            key={child.id}
+                                            type="button"
+                                            className={`w-full text-left flex items-center gap-1.5 p-1.5 rounded hover:bg-gray-200 ${selectedStoryId === child.id ? 'bg-blue-100' : ''}`}
+                                            onClick={() => setSelectedStory(child.id)}
+                                          >
+                                            <span className="text-[10px] text-gray-500">#{child.chapterNumber || '?'}</span>
+                                            <DocumentIcon />
+                                            <span className="flex-1 text-sm truncate">{child.chapterTitle || child.name}</span>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
-                              {collectionStories.length === 0 && (
+                                );
+                              })}
+                              {rootStories.length === 0 && (
                                 <p className="text-xs text-gray-400 py-1 pl-5">No stories</p>
                               )}
                             </div>

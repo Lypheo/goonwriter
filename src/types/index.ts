@@ -20,12 +20,40 @@ export interface Story {
   collectionId: string;
   name: string;
   sections: StorySection[];
+  parentStoryId?: string | null;
+  chapterNumber?: number | null;
+  chapterTitle?: string;
+  writingPlan?: WritingPlan | null;
+  promptPlaceholders?: PromptPlaceholder[];
+  childPromptTemplate?: string;
+  childResponseTemplate?: string;
   content: string; // Plain text content (for display/export)
   htmlContent: string; // HTML with authorship marks (source of truth)
   totalCost: number; // Accumulated generation cost in USD
   totalTokens: number; // Accumulated token usage
   createdAt: number;
   updatedAt: number;
+}
+
+export interface PromptPlaceholder {
+  id: string;
+  name: string;
+  value: string;
+  collapsed?: boolean;
+  editorHeight?: number;
+}
+
+export interface WritingPlanChapter {
+  chapterNumber: number;
+  title: string;
+  outline: string;
+}
+
+export interface WritingPlan {
+  summary: string;
+  chapters: WritingPlanChapter[];
+  rawSummaryBlock: string;
+  rawChaptersBlock: string;
 }
 
 export interface StorySection {
