@@ -341,6 +341,9 @@ export function StoryEditor() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
   const scrollTopRef = useRef(0);
+  const scrollPositionByStoryRef = useRef<Map<string, number>>(new Map());
+  const pendingScrollRestoreRef = useRef<{ storyId: string; desiredTop: number; attempts: number } | null>(null);
+  const previousSelectedStoryIdRef = useRef<string | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const sectionEditorsRef = useRef<Map<string, Editor>>(new Map());
   const sectionsRef = useRef<StorySection[]>([]);
@@ -886,6 +889,26 @@ export function StoryEditor() {
     const container = scrollContainerRef.current;
     if (!container) return;
 
+    const pendingRestore = pendingScrollRestoreRef.current;
+    if (pendingRestore && selectedStoryId && pendingRestore.storyId === selectedStoryId) {
+      pendingRestore.attempts += 1;
+      const maxScrollTopForRestore = Math.max(0, container.scrollHeight - container.clientHeight);
+      const targetScrollTop = Math.max(0, Math.min(pendingRestore.desiredTop, maxScrollTopForRestore));
+      if (Math.abs(container.scrollTop - targetScrollTop) > 1) {
+        container.scrollTop = targetScrollTop;
+      }
+
+      const settled = Math.abs(container.scrollTop - targetScrollTop) <= 1;
+      const canFinalize = settled && (
+        maxScrollTopForRestore >= pendingRestore.desiredTop - 1 ||
+        pendingRestore.attempts >= 30
+      );
+
+      if (canFinalize) {
+        pendingScrollRestoreRef.current = null;
+      }
+    }
+
     scrollTopRef.current = container.scrollTop;
 
     const nextMetrics = {
@@ -904,7 +927,7 @@ export function StoryEditor() {
     });
 
     scheduleScrollbarThumbUpdate(scrollTopRef.current, nextMetrics);
-  }, [scheduleScrollbarThumbUpdate]);
+  }, [scheduleScrollbarThumbUpdate, selectedStoryId]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -912,6 +935,9 @@ export function StoryEditor() {
 
     const onScroll = () => {
       scrollTopRef.current = container.scrollTop;
+      if (selectedStoryId) {
+        scrollPositionByStoryRef.current.set(selectedStoryId, container.scrollTop);
+      }
       scheduleScrollbarThumbUpdate(scrollTopRef.current, scrollMetrics);
     };
     const onResize = () => updateScrollMetrics();
@@ -938,6 +964,51 @@ export function StoryEditor() {
       }
     };
   }, [scheduleScrollbarThumbUpdate, scrollMetrics, updateScrollMetrics]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const previousStoryId = previousSelectedStoryIdRef.current;
+
+    if (container && previousStoryId) {
+      scrollPositionByStoryRef.current.set(previousStoryId, container.scrollTop);
+    }
+
+    previousSelectedStoryIdRef.current = selectedStoryId || null;
+
+    if (!container || !selectedStoryId) {
+      pendingScrollRestoreRef.current = null;
+      return;
+    }
+
+    pendingScrollRestoreRef.current = {
+      storyId: selectedStoryId,
+      desiredTop: scrollPositionByStoryRef.current.get(selectedStoryId) || 0,
+      attempts: 0,
+    };
+
+    const restoreScrollTop = () => {
+      updateScrollMetrics();
+    };
+
+    const frame1 = requestAnimationFrame(() => {
+      restoreScrollTop();
+      requestAnimationFrame(restoreScrollTop);
+    });
+    const timer = setTimeout(restoreScrollTop, 80);
+
+    return () => {
+      cancelAnimationFrame(frame1);
+      clearTimeout(timer);
+    };
+  }, [selectedStoryId, updateScrollMetrics]);
+
+  useEffect(() => {
+    return () => {
+      const container = scrollContainerRef.current;
+      if (!container || !selectedStoryId) return;
+      scrollPositionByStoryRef.current.set(selectedStoryId, container.scrollTop);
+    };
+  }, [selectedStoryId]);
 
   useEffect(() => {
     scheduleScrollbarThumbUpdate(scrollTopRef.current, scrollMetrics);
