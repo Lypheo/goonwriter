@@ -109,22 +109,33 @@ export async function fetchStory(id: string) {
   }
 }
 
-export async function saveStory(story: { id: string; [key: string]: unknown }): Promise<boolean> {
+export async function saveStory(story: { id: string; updatedAt?: number; [key: string]: unknown }): Promise<{ success: boolean; conflict?: boolean; serverUpdatedAt?: number }> {
   try {
     const response = await fetch(`${API_BASE}/stories/${story.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
+        // Optimistic concurrency control: send If-Match with current version
+        ...(story.updatedAt ? { 'If-Match': String(story.updatedAt) } : {}),
       },
       body: JSON.stringify(story),
     });
+    
+    if (response.status === 409) {
+      // Conflict: server version is different
+      const data = await response.json();
+      console.warn('Story save conflict - server version differs:', data);
+      return { success: false, conflict: true, serverUpdatedAt: data.serverUpdatedAt };
+    }
+    
     if (!response.ok) {
       throw new Error(`HTTP error ${response.status}`);
     }
-    return true;
+    
+    return { success: true };
   } catch (error) {
     console.error('Failed to save story:', error);
-    return false;
+    return { success: false };
   }
 }
 

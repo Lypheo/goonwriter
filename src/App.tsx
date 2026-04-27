@@ -4,6 +4,7 @@ import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
 import { PromptEngineeringSidebar } from './components/sidebar/PromptEngineeringSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
+import { SyncConflictNotifier } from './components/SyncConflictNotifier';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
 
 const LEFT_PANEL_WIDTH_STORAGE_KEY = 'goonwriter:leftPanelWidth';
@@ -65,6 +66,17 @@ function App() {
     };
     
     initializeStores();
+  }, []);
+
+  // Periodic sync with server to detect and handle remote changes
+  useEffect(() => {
+    if (!useDataStore.getState().isInitialized) return;
+    
+    const syncInterval = setInterval(() => {
+      useDataStore.getState().syncWithServer();
+    }, 30000); // Sync every 30 seconds
+    
+    return () => clearInterval(syncInterval);
   }, []);
 
   useEffect(() => {
@@ -176,6 +188,7 @@ function App() {
   
   return (
     <div className="h-screen flex overflow-hidden bg-white">
+      <SyncConflictNotifier />
       {/* Left Sidebar Panel */}
       <div style={{ width: `${leftPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0">
         <div className="shrink-0 border-b border-gray-200 bg-gray-50 px-2 py-1.5">

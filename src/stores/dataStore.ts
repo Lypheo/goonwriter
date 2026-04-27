@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
-import { fetchData, saveData } from '../services/apiService';
+import { fetchData, saveData, saveStory } from '../services/apiService';
 import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
 import {
   applyMutableVariableEdit,
@@ -17,9 +17,17 @@ interface DataState {
   stories: Story[];
   isLoading: boolean;
   isInitialized: boolean;
+  lastSyncTime: number; // Track last server sync
+  syncConflicts: Array<{ storyId: string; storyName: string; localUpdatedAt: number; serverUpdatedAt: number; resolvedAt?: number; resolutionChoice?: 'keep-local' | 'use-server' }>; // Track conflicts
   
   // Initialize from server
   initialize: () => Promise<void>;
+  // Periodic sync to detect remote changes
+  syncWithServer: () => Promise<void>;
+  // Acknowledge/resolve a conflict
+  resolveConflict: (storyId: string, choice: 'keep-local' | 'use-server') => void;
+  // Clear old conflicts
+  clearResolvedConflicts: () => void;
   
   // Group CRUD
   createGroup: (name: string) => Group;
@@ -153,6 +161,8 @@ export const useDataStore = create<DataState>()(
       stories: [],
       isLoading: true,
       isInitialized: false,
+      lastSyncTime: 0,
+      syncConflicts: [],
       
       initialize: async () => {
         if (get().isInitialized) return;
@@ -174,6 +184,7 @@ export const useDataStore = create<DataState>()(
             stories: normalizedStories,
             isLoading: false,
             isInitialized: true,
+            lastSyncTime: Date.now(),
           });
 
           debouncedSaveStories(normalizedStories);
@@ -181,6 +192,98 @@ export const useDataStore = create<DataState>()(
           console.error('Failed to initialize data:', error);
           set({ isLoading: false, isInitialized: true });
         }
+      },
+      
+      // Periodic sync with server to detect remote changes
+      syncWithServer: async () => {
+        try {
+          const [groups, collections, stories] = await Promise.all([
+            fetchData<Group[]>('groups'),
+            fetchData<Collection[]>('collections'),
+            fetchData<Story[]>('stories'),
+          ]);
+          
+          if (!stories) return;
+          
+          const normalizedServerStories = stories.map((story) => normalizeStory(story));
+          const localStories = get().stories;
+          
+          // Detect conflicts: local story was edited since last sync and server version differs
+          const conflicts = localStories
+            .map(local => {
+              const serverStory = normalizedServerStories.find(s => s.id === local.id);
+              if (!serverStory) return null; // Story deleted on server
+              
+              // Check if local was edited after last sync AND server has a different updatedAt
+              if (local.updatedAt > get().lastSyncTime && serverStory.updatedAt > get().lastSyncTime
+                && local.updatedAt !== serverStory.updatedAt) {
+                return {
+                  storyId: local.id,
+                  storyName: local.name,
+                  localUpdatedAt: local.updatedAt,
+                  serverUpdatedAt: serverStory.updatedAt,
+                };
+              }
+              return null;
+            })
+            .filter((c): c is NonNullable<typeof c> => c !== null);
+          
+          // If conflicts detected, notify user and don't overwrite
+          if (conflicts.length > 0) {
+            console.warn('Sync conflicts detected:', conflicts);
+            const conflictIds = new Set(conflicts.map(c => c.storyId));
+            
+            set(state => ({
+              syncConflicts: [
+                ...state.syncConflicts.filter(c => c.resolvedAt),
+                ...conflicts,
+              ],
+            }));
+            
+            // Don't sync conflicting stories
+            const safeSyncedStories = normalizedServerStories.filter(s => !conflictIds.has(s.id));
+            set({
+              groups: groups || [],
+              collections: collections || [],
+              stories: [...safeSyncedStories, ...localStories.filter(s => conflictIds.has(s.id))],
+              lastSyncTime: Date.now(),
+            });
+          } else {
+            // No conflicts - safe to update all data
+            set({
+              groups: groups || [],
+              collections: collections || [],
+              stories: normalizedServerStories,
+              lastSyncTime: Date.now(),
+              syncConflicts: [], // Clear any old resolved conflicts
+            });
+          }
+        } catch (error) {
+          console.error('Failed to sync with server:', error);
+        }
+      },
+      
+      resolveConflict: (storyId: string, choice: 'keep-local' | 'use-server') => {
+        set(state => {
+          const updated = state.syncConflicts.map(c =>
+            c.storyId === storyId
+              ? { ...c, resolvedAt: Date.now(), resolutionChoice: choice }
+              : c
+          );
+          
+          return { syncConflicts: updated };
+        });
+        
+        // If user chose to use server, trigger a sync to get fresh data
+        if (choice === 'use-server') {
+          setTimeout(() => get().syncWithServer(), 100);
+        }
+      },
+      
+      clearResolvedConflicts: () => {
+        set(state => ({
+          syncConflicts: state.syncConflicts.filter(c => !c.resolvedAt),
+        }));
       },
       
       // Group CRUD
@@ -318,7 +421,28 @@ export const useDataStore = create<DataState>()(
           const newStories = shouldSyncChildren
             ? syncPlanChildren(mappedStories, updatedStory as Story, Date.now())
             : mappedStories;
-          debouncedSaveStories(newStories);
+          
+          // Save individual story to avoid overwriting concurrent edits on other devices
+          const storyToSave = newStories.find(s => s.id === id);
+          if (storyToSave) {
+            saveStory(storyToSave as unknown as { id: string; updatedAt?: number; [key: string]: unknown }).then(result => {
+              // Handle conflict
+              if (result.conflict) {
+                set(state => ({
+                  syncConflicts: [
+                    ...state.syncConflicts.filter(c => c.storyId !== id || c.resolvedAt),
+                    {
+                      storyId: id,
+                      storyName: storyToSave.name || 'Untitled',
+                      localUpdatedAt: storyToSave.updatedAt || 0,
+                      serverUpdatedAt: result.serverUpdatedAt || 0,
+                    },
+                  ],
+                }));
+              }
+            });
+          }
+          
           return { stories: newStories };
         });
       },
