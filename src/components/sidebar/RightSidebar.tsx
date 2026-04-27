@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
 import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
@@ -71,8 +71,14 @@ export function RightSidebar() {
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
   const enabledCompletionCount = completionModels.filter((m) => m.enabled).length;
+
+  const enabledModels = useMemo(
+    () => models.filter((model) => model.enabled !== false),
+    [models]
+  );
   
-  const selectedModel = getSelectedModel();
+  const selectedModelRaw = getSelectedModel();
+  const selectedModel = selectedModelRaw && selectedModelRaw.enabled !== false ? selectedModelRaw : null;
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
   const effectiveUseChatCompletion = useChatCompletion || !!selectedModel?.chatOnly;
 
@@ -155,7 +161,7 @@ export function RightSidebar() {
     let active = true;
 
     const loadPricing = async () => {
-      const openRouterModels = models.filter(
+      const openRouterModels = enabledModels.filter(
         (model) => model.baseUrl?.toLowerCase().includes('openrouter.ai') && model.token && model.modelId
       );
 
@@ -200,7 +206,15 @@ export function RightSidebar() {
     return () => {
       active = false;
     };
-  }, [models]);
+  }, [enabledModels]);
+
+  useEffect(() => {
+    if (!selectedModelId) return;
+    const stillEnabled = enabledModels.some((model) => model.id === selectedModelId);
+    if (!stillEnabled) {
+      setSelectedModel(null);
+    }
+  }, [enabledModels, selectedModelId, setSelectedModel]);
 
   const parseStreamedAssistantContent = (
     rawChunk: string,
@@ -485,7 +499,7 @@ export function RightSidebar() {
   };
 
   const exportStoryText = getExportStoryText();
-  const sortedModels = [...models].sort((left, right) => {
+  const sortedModels = [...enabledModels].sort((left, right) => {
     const leftPromptPrice = openRouterPricingByModelId[left.id]?.prompt;
     const rightPromptPrice = openRouterPricingByModelId[right.id]?.prompt;
     const leftHasPrice = typeof leftPromptPrice === 'number';
@@ -604,14 +618,14 @@ export function RightSidebar() {
           </Button>
         </div>
         
-        {models.length === 0 && (
+        {enabledModels.length === 0 && (
           <p className="mt-2 text-xs text-gray-500">
-            No models configured.{' '}
+            {models.length === 0 ? 'No models configured.' : 'No enabled models.'}{' '}
             <button
               className="text-blue-600 hover:underline"
               onClick={() => setShowModelDialog(true)}
             >
-              Add one
+              {models.length === 0 ? 'Add one' : 'Enable one'}
             </button>
           </p>
         )}

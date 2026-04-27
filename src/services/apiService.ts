@@ -146,7 +146,7 @@ export async function fetchOpenRouterModelPricing(
   try {
     const models = await fetchOpenRouterModels(token);
     const targetModel = models.find(
-      (model) => model.id === modelId
+      (model) => model.id.toLowerCase() === modelId.toLowerCase()
     );
 
     return targetModel?.pricing || null;

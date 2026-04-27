@@ -77,6 +77,7 @@ export const useModelStore = create<ModelState>()(
 
           const normalizedModels = (models || []).map((model) => ({
             ...model,
+            enabled: model.enabled ?? true,
             chatOnly: model.chatOnly ?? false,
             disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
           }));

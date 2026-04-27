@@ -76,6 +76,7 @@ export interface AuthorshipSpan {
 export interface ModelConfig {
   id: string;
   name: string;
+  enabled: boolean;
   baseUrl: string;
   token: string;
   modelId: string;

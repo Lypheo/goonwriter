@@ -49,6 +49,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   // Form state
   const [formData, setFormData] = useState<{
     name: string;
+    enabled: boolean;
     baseUrl: string;
     token: string;
     modelId: string;
@@ -57,6 +58,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     instructionTemplate: InstructionTemplate;
   }>({
     name: '',
+    enabled: true,
     baseUrl: '',
     token: '',
     modelId: '',
@@ -94,6 +96,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       lastLoadedIdRef.current = null;
       setFormData({
         name: '',
+        enabled: true,
         baseUrl: '',
         token: '',
         modelId: '',
@@ -114,6 +117,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     lastLoadedIdRef.current = selectedId;
     setFormData({
       name: model.name,
+      enabled: model.enabled ?? true,
       baseUrl: model.baseUrl,
       token: model.token,
       modelId: model.modelId,
@@ -147,6 +151,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   const handleCreate = () => {
     const newModel = createModel({
       name: 'New Model',
+      enabled: true,
       baseUrl: 'https://openrouter.ai/api/v1',
       token: '',
       modelId: '',
@@ -366,6 +371,16 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                   placeholder="deepseek/deepseek-v3"
                 />
               </div>
+
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.enabled}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, enabled: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <span>Enabled (show in model list)</span>
+              </label>
               
               <Input
                 label="API Base URL *"
@@ -481,7 +496,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
               </div>
               
               {/* Provider Settings */}
-              <div className={`border-t pt-4 ${formData.chatOnly ? 'opacity-50' : ''}`}>
+              <div className="border-t pt-4">
                 <h4 className="font-medium text-gray-700 mb-3">Provider Settings</h4>
                 
                 <div className="grid grid-cols-2 gap-4 mb-4">
@@ -497,7 +512,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="DeepInfra or DeepInfra, Together"
                     chipClassName="bg-blue-100 text-blue-800"
                     chipRemoveClassName="text-blue-700 hover:text-blue-900"
-                    disabled={formData.chatOnly}
                   />
                   <StringListEditor
                     label="Banned Providers"
@@ -511,7 +525,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="OpenAI or OpenAI, Groq"
                     chipClassName="bg-red-100 text-red-800"
                     chipRemoveClassName="text-red-700 hover:text-red-900"
-                    disabled={formData.chatOnly}
                   />
                 </div>
                 
@@ -528,7 +541,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     placeholder="fp16 or fp16, int8"
                     chipClassName="bg-purple-100 text-purple-800"
                     chipRemoveClassName="text-purple-700 hover:text-purple-900"
-                    disabled={formData.chatOnly}
                   />
                   <Select
                     label="Sort Order"
@@ -540,7 +552,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                       { value: 'throughput', label: 'Throughput' },
                       { value: 'latency', label: 'Latency' },
                     ]}
-                    disabled={formData.chatOnly}
                   />
                 </div>
               </div>
