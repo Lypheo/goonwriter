@@ -175,6 +175,10 @@ export const useDataStore = create<DataState>()(
             fetchData<Collection[]>('collections'),
             fetchData<Story[]>('stories'),
           ]);
+
+          if (!groups || !collections || !stories) {
+            throw new Error('Failed to load data from server');
+          }
           
           const normalizedStories = (stories || []).map((story) => normalizeStory(story));
 
@@ -190,7 +194,8 @@ export const useDataStore = create<DataState>()(
           debouncedSaveStories(normalizedStories);
         } catch (error) {
           console.error('Failed to initialize data:', error);
-          set({ isLoading: false, isInitialized: true });
+          set({ isLoading: false, isInitialized: false });
+          throw error;
         }
       },
       

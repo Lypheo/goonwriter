@@ -13,6 +13,9 @@ const PORT = 3001;
 // Data directory
 const DATA_DIR = path.join(__dirname, 'data');
 
+// Serialize writes per file to avoid concurrent truncation/corruption.
+const writeLocks = new Map();
+
 // Ensure data directory exists
 async function ensureDataDir() {
   try {
@@ -47,22 +50,37 @@ async function readData(type) {
 async function writeData(type, data) {
   await ensureDataDir();
   const filePath = getFilePath(type);
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  const json = JSON.stringify(data, null, 2);
+
+  const lastWrite = writeLocks.get(filePath) || Promise.resolve();
+  const nextWrite = lastWrite.then(async () => {
+    const tempPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await fs.writeFile(tempPath, json, 'utf-8');
+    try {
+      await fs.rename(tempPath, filePath);
+    } catch (error) {
+      if (error.code === 'EEXIST' || error.code === 'EPERM') {
+        await fs.unlink(filePath).catch(() => undefined);
+        await fs.rename(tempPath, filePath);
+      } else {
+        await fs.unlink(tempPath).catch(() => undefined);
+        throw error;
+      }
+    }
+  });
+
+  writeLocks.set(filePath, nextWrite);
+  try {
+    await nextWrite;
+  } finally {
+    if (writeLocks.get(filePath) === nextWrite) {
+      writeLocks.delete(filePath);
+    }
+  }
 }
 
 // Routes
 
-// Get all data of a type (groups, collections, stories, models, settings)
-app.get('/api/:type', async (req, res) => {
-  try {
-    const { type } = req.params;
-    const data = await readData(type);
-    res.json(data || getDefaultData(type));
-  } catch (error) {
-    console.error(`Error reading ${req.params.type}:`, error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // Save all data of a type
 app.put('/api/:type', async (req, res) => {
@@ -126,6 +144,18 @@ app.put('/api/stories/:id', async (req, res) => {
     res.json({ success: true, story: req.body });
   } catch (error) {
     console.error('Error updating story:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all data of a type (groups, collections, stories, models, settings)
+app.get('/api/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    const data = await readData(type);
+    res.json(data || getDefaultData(type));
+  } catch (error) {
+    console.error(`Error reading ${req.params.type}:`, error);
     res.status(500).json({ error: error.message });
   }
 });
