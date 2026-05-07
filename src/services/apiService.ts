@@ -139,6 +139,21 @@ export async function saveStory(story: { id: string; updatedAt?: number; [key: s
   }
 }
 
+export async function deleteStory(id: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE}/stories/${id}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error ${response.status}`);
+    }
+    return true;
+  } catch (error) {
+    console.error('Failed to delete story:', error);
+    return false;
+  }
+}
+
 export async function checkServerHealth(): Promise<boolean> {
   try {
     const response = await fetch(`${API_BASE}/health`);

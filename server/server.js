@@ -32,12 +32,50 @@ app.use(express.json({ limit: '50mb' }));
 // File paths
 const getFilePath = (type) => path.join(DATA_DIR, `${type}.json`);
 
+const ALLOWED_TYPES = new Set([
+  'groups',
+  'collections',
+  'stories',
+  'models',
+  'completionModels',
+  'settings',
+  'appState',
+]);
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validatePayload(type, payload) {
+  switch (type) {
+    case 'groups':
+    case 'collections':
+    case 'stories':
+      return Array.isArray(payload);
+    case 'completionModels':
+      return isPlainObject(payload) && Array.isArray(payload.models);
+    case 'settings':
+      return isPlainObject(payload) && isPlainObject(payload.samplingParams);
+    case 'appState':
+      return isPlainObject(payload);
+    case 'models':
+      return Array.isArray(payload);
+    default:
+      return false;
+  }
+}
+
 // Generic read function
 async function readData(type) {
   try {
     const filePath = getFilePath(type);
     const data = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(data);
+    try {
+      return JSON.parse(data);
+    } catch (parseError) {
+      console.error(`Invalid JSON in ${filePath}:`, parseError);
+      return null;
+    }
   } catch (error) {
     if (error.code === 'ENOENT') {
       return null;
@@ -51,6 +89,16 @@ async function writeData(type, data) {
   await ensureDataDir();
   const filePath = getFilePath(type);
   const json = JSON.stringify(data, null, 2);
+
+  try {
+    await fs.access(filePath);
+    const backupPath = `${filePath}.bak-${Date.now()}`;
+    await fs.copyFile(filePath, backupPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error(`Failed to backup ${filePath}:`, error);
+    }
+  }
 
   const lastWrite = writeLocks.get(filePath) || Promise.resolve();
   const nextWrite = lastWrite.then(async () => {
@@ -86,6 +134,15 @@ async function writeData(type, data) {
 app.put('/api/:type', async (req, res) => {
   try {
     const { type } = req.params;
+    if (!ALLOWED_TYPES.has(type)) {
+      return res.status(400).json({ error: 'Unsupported data type' });
+    }
+    if (type === 'stories') {
+      return res.status(405).json({ error: 'Bulk story writes are disabled. Use /api/stories/:id.' });
+    }
+    if (!validatePayload(type, req.body)) {
+      return res.status(400).json({ error: 'Invalid payload shape' });
+    }
     await writeData(type, req.body);
     res.json({ success: true });
   } catch (error) {
@@ -148,10 +205,34 @@ app.put('/api/stories/:id', async (req, res) => {
   }
 });
 
+// Delete a specific story
+app.delete('/api/stories/:id', async (req, res) => {
+  try {
+    let stories = await readData('stories');
+    if (!stories) {
+      return res.status(404).json({ error: 'No stories found' });
+    }
+
+    const nextStories = stories.filter((story) => story.id !== req.params.id);
+    if (nextStories.length === stories.length) {
+      return res.status(404).json({ error: 'Story not found' });
+    }
+
+    await writeData('stories', nextStories);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting story:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all data of a type (groups, collections, stories, models, settings)
 app.get('/api/:type', async (req, res) => {
   try {
     const { type } = req.params;
+    if (!ALLOWED_TYPES.has(type)) {
+      return res.status(400).json({ error: 'Unsupported data type' });
+    }
     const data = await readData(type);
     res.json(data || getDefaultData(type));
   } catch (error) {

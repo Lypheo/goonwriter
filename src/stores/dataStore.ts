@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
-import { fetchData, saveData, saveStory } from '../services/apiService';
+import { fetchData, saveData, saveStory, deleteStory } from '../services/apiService';
 import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
 import {
   applyMutableVariableEdit,
@@ -56,7 +56,6 @@ interface DataState {
 // Debounce save operations
 let saveGroupsTimeout: ReturnType<typeof setTimeout> | null = null;
 let saveCollectionsTimeout: ReturnType<typeof setTimeout> | null = null;
-let saveStoriesTimeout: ReturnType<typeof setTimeout> | null = null;
 let saveAppStateTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const debouncedSaveGroups = (groups: Group[]) => {
@@ -67,11 +66,6 @@ const debouncedSaveGroups = (groups: Group[]) => {
 const debouncedSaveCollections = (collections: Collection[]) => {
   if (saveCollectionsTimeout) clearTimeout(saveCollectionsTimeout);
   saveCollectionsTimeout = setTimeout(() => saveData('collections', collections), 500);
-};
-
-const debouncedSaveStories = (stories: Story[]) => {
-  if (saveStoriesTimeout) clearTimeout(saveStoriesTimeout);
-  saveStoriesTimeout = setTimeout(() => saveData('stories', stories), 500);
 };
 
 const debouncedSaveAppState = (appState: { selectedStoryId: string | null; userCommandTemplate?: string }) => {
@@ -155,7 +149,34 @@ function syncPlanChildren(stories: Story[], parentStory: Story, now: number): St
 
 export const useDataStore = create<DataState>()(
   subscribeWithSelector(
-    (set, get) => ({
+    (set, get) => {
+      const saveStoryPayload = (story: Story) => story as unknown as { id: string; updatedAt?: number; [key: string]: unknown };
+
+      const queueStorySaveWithConflict = (story: Story) => {
+        saveStory(saveStoryPayload(story)).then((result) => {
+          if (result.conflict) {
+            set((state) => ({
+              syncConflicts: [
+                ...state.syncConflicts.filter((c) => c.storyId !== story.id || c.resolvedAt),
+                {
+                  storyId: story.id,
+                  storyName: story.name || 'Untitled',
+                  localUpdatedAt: story.updatedAt || 0,
+                  serverUpdatedAt: result.serverUpdatedAt || 0,
+                },
+              ],
+            }));
+          }
+        });
+      };
+
+      const queueStoryDeletes = (ids: string[]) => {
+        ids.forEach((id) => {
+          deleteStory(id);
+        });
+      };
+
+      return {
       groups: [],
       collections: [],
       stories: [],
@@ -190,8 +211,6 @@ export const useDataStore = create<DataState>()(
             isInitialized: true,
             lastSyncTime: Date.now(),
           });
-
-          debouncedSaveStories(normalizedStories);
         } catch (error) {
           console.error('Failed to initialize data:', error);
           set({ isLoading: false, isInitialized: false });
@@ -328,9 +347,12 @@ export const useDataStore = create<DataState>()(
           const newGroups = state.groups.filter((g) => g.id !== id);
           const newCollections = state.collections.filter((c) => c.groupId !== id);
           const newStories = state.stories.filter((s) => !collectionIds.includes(s.collectionId));
+          const removedStoryIds = state.stories
+            .filter((s) => collectionIds.includes(s.collectionId))
+            .map((s) => s.id);
           debouncedSaveGroups(newGroups);
           debouncedSaveCollections(newCollections);
-          debouncedSaveStories(newStories);
+          queueStoryDeletes(removedStoryIds);
           return {
             groups: newGroups,
             collections: newCollections,
@@ -371,8 +393,11 @@ export const useDataStore = create<DataState>()(
         set((state) => {
           const newCollections = state.collections.filter((c) => c.id !== id);
           const newStories = state.stories.filter((s) => s.collectionId !== id);
+          const removedStoryIds = state.stories
+            .filter((s) => s.collectionId === id)
+            .map((s) => s.id);
           debouncedSaveCollections(newCollections);
-          debouncedSaveStories(newStories);
+          queueStoryDeletes(removedStoryIds);
           return {
             collections: newCollections,
             stories: newStories,
@@ -398,7 +423,7 @@ export const useDataStore = create<DataState>()(
         };
         set((state) => {
           const newStories = [...state.stories, story];
-          debouncedSaveStories(newStories);
+          queueStorySaveWithConflict(story);
           return { stories: newStories };
         });
         return story;
@@ -430,22 +455,7 @@ export const useDataStore = create<DataState>()(
           // Save individual story to avoid overwriting concurrent edits on other devices
           const storyToSave = newStories.find(s => s.id === id);
           if (storyToSave) {
-            saveStory(storyToSave as unknown as { id: string; updatedAt?: number; [key: string]: unknown }).then(result => {
-              // Handle conflict
-              if (result.conflict) {
-                set(state => ({
-                  syncConflicts: [
-                    ...state.syncConflicts.filter(c => c.storyId !== id || c.resolvedAt),
-                    {
-                      storyId: id,
-                      storyName: storyToSave.name || 'Untitled',
-                      localUpdatedAt: storyToSave.updatedAt || 0,
-                      serverUpdatedAt: result.serverUpdatedAt || 0,
-                    },
-                  ],
-                }));
-              }
-            });
+            queueStorySaveWithConflict(storyToSave);
           }
           
           return { stories: newStories };
@@ -468,7 +478,7 @@ export const useDataStore = create<DataState>()(
           }
 
           const newStories = state.stories.filter((s) => !removeSet.has(s.id));
-          debouncedSaveStories(newStories);
+          queueStoryDeletes(Array.from(removeSet));
           return { stories: newStories };
         });
       },
@@ -496,7 +506,7 @@ export const useDataStore = create<DataState>()(
         };
         set((state) => {
           const newStories = [...state.stories, duplicated];
-          debouncedSaveStories(newStories);
+          queueStorySaveWithConflict(duplicated);
           return { stories: newStories };
         });
         return duplicated;
@@ -518,8 +528,12 @@ export const useDataStore = create<DataState>()(
           const newStories = updatedParent && !updatedParent.parentStoryId && updates.writingPlan
             ? syncPlanChildren(mappedStories, updatedParent, now)
             : mappedStories;
-
-          debouncedSaveStories(newStories);
+          if (updatedParent) {
+            const storiesToSave = newStories.filter((story) => (
+              story.id === updatedParent.id || story.parentStoryId === updatedParent.id
+            ));
+            storiesToSave.forEach(queueStorySaveWithConflict);
+          }
           return { stories: newStories };
         });
       },
@@ -542,8 +556,12 @@ export const useDataStore = create<DataState>()(
           const newStories = refreshedParent
             ? syncPlanChildren(mappedStories, refreshedParent, now)
             : mappedStories;
-
-          debouncedSaveStories(newStories);
+          if (refreshedParent) {
+            const storiesToSave = newStories.filter((story) => (
+              story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
+            ));
+            storiesToSave.forEach(queueStorySaveWithConflict);
+          }
           return { stories: newStories };
         });
       },
@@ -595,8 +613,12 @@ export const useDataStore = create<DataState>()(
           const syncedStories = refreshedParent
             ? syncPlanChildren(newStories, refreshedParent, Date.now())
             : newStories;
-
-          debouncedSaveStories(syncedStories);
+          if (refreshedParent) {
+            const storiesToSave = syncedStories.filter((story) => (
+              story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
+            ));
+            storiesToSave.forEach(queueStorySaveWithConflict);
+          }
           return { stories: syncedStories };
         });
       },
@@ -609,7 +631,8 @@ export const useDataStore = create<DataState>()(
       getCollectionsByGroup: (groupId: string) => {
         return get().collections.filter((c) => c.groupId === groupId);
       },
-    })
+      };
+    }
   )
 );
 
