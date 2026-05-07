@@ -27,8 +27,6 @@ export interface Story {
   promptPlaceholders?: PromptPlaceholder[];
   childPromptTemplate?: string;
   childResponseTemplate?: string;
-  content: string; // Plain text content (for display/export)
-  htmlContent: string; // HTML with authorship marks (source of truth)
   totalCost: number; // Accumulated generation cost in USD
   totalTokens: number; // Accumulated token usage
   createdAt: number;
@@ -62,14 +60,6 @@ export interface StorySection {
   content: string;
   thinkingContent?: string;
   collapsed?: boolean;
-}
-
-// Legacy interface - kept for migration
-export interface AuthorshipSpan {
-  start: number; // Start character index (inclusive)
-  end: number;   // End character index (exclusive)
-  author: 'user' | 'ai';
-  modelId?: string; // Only set when author is 'ai'
 }
 
 // Model configuration

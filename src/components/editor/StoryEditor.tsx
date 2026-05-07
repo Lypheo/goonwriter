@@ -9,7 +9,6 @@ import { UndoRedo } from '@tiptap/extensions';
 import type { Editor } from '@tiptap/core';
 import { useAppStore, useCompletionModelStore, useDataStore, useGenerationStore } from '../../stores';
 import type { CompletionModelConfig, StorySection } from '../../types';
-import { deriveFlatStoryContent } from '../../services/storySections';
 import { streamSentenceCompletion } from '../../services/llmService';
 import { createId } from '../../services/id';
 import {
@@ -315,8 +314,6 @@ export function StoryEditor() {
     if (!selectedStory) return;
     updateStory(selectedStory.id, {
       sections: nextSections,
-      content: deriveFlatStoryContent(nextSections),
-      htmlContent: '',
     });
   }, [selectedStory, updateStory]);
 

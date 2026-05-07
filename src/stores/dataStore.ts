@@ -52,7 +52,7 @@ interface DataState {
   
   // Story CRUD
   createStory: (collectionId: string, name: string) => Story;
-  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => void;
+  updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'totalCost' | 'totalTokens'>>) => void;
   deleteStory: (id: string) => void;
   duplicateStory: (id: string) => Story | null;
   updateStoryPromptConfig: (storyId: string, updates: Partial<Pick<Story, 'promptPlaceholders' | 'childPromptTemplate' | 'childResponseTemplate' | 'writingPlan'>>) => void;
@@ -121,7 +121,6 @@ function syncPlanChildren(stories: Story[], parentStory: Story, now: number): St
         chapterNumber: chapter.chapterNumber,
         chapterTitle: chapter.title,
         sections,
-        content: deriveFlatStoryContent(sections),
         updatedAt: now,
       });
       continue;
@@ -145,8 +144,6 @@ function syncPlanChildren(stories: Story[], parentStory: Story, now: number): St
       childPromptTemplate: '',
       childResponseTemplate: '',
       sections,
-      content: deriveFlatStoryContent(sections),
-      htmlContent: '',
       totalCost: 0,
       totalTokens: 0,
       createdAt: now,
@@ -177,12 +174,11 @@ export const useDataStore = create<DataState>()(
       );
 
       const getStoryText = (story: Story) => {
-        if (story.content && story.content.trim().length > 0) return story.content;
         if (story.sections && story.sections.length > 0) {
           const derived = deriveFlatStoryContent(story.sections);
           if (derived.trim().length > 0) return derived;
         }
-        return story.htmlContent || '';
+        return (story as { content?: string }).content || '';
       };
 
       const queueStorySaveWithConflict = (story: Story, options?: { ifMatch?: number }) => {
@@ -301,8 +297,8 @@ export const useDataStore = create<DataState>()(
               // Check if local was edited after last sync AND server has a different updatedAt
               if (local.updatedAt > get().lastSyncTime && serverStory.updatedAt > get().lastSyncTime
                 && local.updatedAt !== serverStory.updatedAt) {
-                const localText = local.content || local.htmlContent || '';
-                const serverText = serverStory.content || serverStory.htmlContent || '';
+                const localText = getStoryText(local);
+                const serverText = getStoryText(serverStory);
                 if (normalizeForCompare(serverText) === normalizeForCompare(localText)) {
                   return null;
                 }
@@ -506,8 +502,6 @@ export const useDataStore = create<DataState>()(
           collectionId,
           name,
           sections,
-          content: deriveFlatStoryContent(sections),
-          htmlContent: '',
           totalCost: 0,
           totalTokens: 0,
           createdAt: now,
@@ -521,7 +515,7 @@ export const useDataStore = create<DataState>()(
         return story;
       },
       
-      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => {
+      updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'totalCost' | 'totalTokens'>>) => {
         set((state) => {
           const previousUpdatedAt = state.stories.find((story) => story.id === id)?.updatedAt;
           const mappedStories = state.stories.map((s) =>
@@ -529,12 +523,6 @@ export const useDataStore = create<DataState>()(
               ? {
                   ...s,
                   ...updates,
-                  ...(updates.sections
-                    ? {
-                        content: updates.content ?? deriveFlatStoryContent(updates.sections),
-                        htmlContent: updates.htmlContent ?? '',
-                      }
-                    : {}),
                   updatedAt: Date.now(),
                 }
               : s
@@ -590,8 +578,6 @@ export const useDataStore = create<DataState>()(
           id: uuidv4(),
           name: `${story.name} (copy)`,
           sections: duplicatedSections,
-          content: deriveFlatStoryContent(duplicatedSections),
-          htmlContent: '',
           totalCost: 0, // Reset cost for duplicated story
           totalTokens: 0,
           createdAt: now,
@@ -702,8 +688,6 @@ export const useDataStore = create<DataState>()(
               ? {
                 ...story,
                 sections: updatedSections,
-                content: deriveFlatStoryContent(updatedSections),
-                htmlContent: '',
                 updatedAt: Date.now(),
               }
               : story

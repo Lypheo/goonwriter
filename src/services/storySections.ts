@@ -220,10 +220,11 @@ export function deriveFlatStoryContent(sections: StorySection[]): string {
 }
 
 export function normalizeStory(story: Story): Story {
-  const sections = story.sections?.length ? ensureSectionsShape(story.sections) : parseLegacyTokenizedContent(story.content || '');
+  const { content: legacyContent = '', ...rest } = story as Story & { content?: string };
+  const sections = story.sections?.length ? ensureSectionsShape(story.sections) : parseLegacyTokenizedContent(legacyContent);
 
   return {
-    ...story,
+    ...rest,
     sections,
     parentStoryId: story.parentStoryId ?? null,
     chapterNumber: story.chapterNumber ?? null,
@@ -236,7 +237,5 @@ export function normalizeStory(story: Story): Story {
     })),
     childPromptTemplate: story.childPromptTemplate ?? DEFAULT_CHILD_PROMPT_TEMPLATE,
     childResponseTemplate: story.childResponseTemplate ?? DEFAULT_CHILD_RESPONSE_TEMPLATE,
-    content: deriveFlatStoryContent(sections),
-    htmlContent: story.htmlContent || '',
   };
 }

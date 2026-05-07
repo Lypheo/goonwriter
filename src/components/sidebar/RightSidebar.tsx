@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useModelStore, useGenerationStore, useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatCompletion } from '../../services/llmService';
-import { deriveFlatStoryContent, storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
+import { storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
 import { resolveSectionsForGeneration } from '../../services/promptEngineering';
 import { createId } from '../../services/id';
 import { fetchOpenRouterModelPricing } from '../../services/apiService';
@@ -288,8 +288,6 @@ export function RightSidebar() {
 
     updateStory(selectedStory.id, {
       sections: workingSections,
-      content: deriveFlatStoryContent(workingSections),
-      htmlContent: '',
     });
 
     const generationSections = resolveSectionsForGeneration({ ...selectedStory, sections: workingSections }, stories);
@@ -330,8 +328,6 @@ export function RightSidebar() {
 
         updateStory(selectedStory.id, {
           sections: workingSections,
-          content: deriveFlatStoryContent(workingSections),
-          htmlContent: '',
         });
         
         setResponseMetadata({ wordsPerSecond: wps });
@@ -381,8 +377,6 @@ export function RightSidebar() {
           );
           updateStory(selectedStory.id, {
             sections: workingSections,
-            content: deriveFlatStoryContent(workingSections),
-            htmlContent: '',
           });
         }
         applyWritingPlanFromStoryResponse(selectedStory.id, `${assistantBaseContent}${generatedResponse}`);
