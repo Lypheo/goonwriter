@@ -109,14 +109,20 @@ export async function fetchStory(id: string) {
   }
 }
 
-export async function saveStory(story: { id: string; updatedAt?: number; [key: string]: unknown }): Promise<{ success: boolean; conflict?: boolean; serverUpdatedAt?: number }> {
+export async function saveStory(
+  story: { id: string; updatedAt?: number; [key: string]: unknown },
+  options?: { force?: boolean; ifMatch?: number }
+): Promise<{ success: boolean; conflict?: boolean; serverUpdatedAt?: number }> {
   try {
+    const matchVersion = options?.ifMatch;
     const response = await fetch(`${API_BASE}/stories/${story.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
         // Optimistic concurrency control: send If-Match with current version
-        ...(story.updatedAt ? { 'If-Match': String(story.updatedAt) } : {}),
+        ...(!options?.force && typeof matchVersion === 'number'
+          ? { 'If-Match': String(matchVersion) }
+          : {}),
       },
       body: JSON.stringify(story),
     });

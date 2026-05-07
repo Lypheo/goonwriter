@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
-import { fetchData, saveData, saveStory, deleteStory } from '../services/apiService';
+import { fetchData, saveData, saveStory, deleteStory, fetchStory } from '../services/apiService';
 import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
 import {
   applyMutableVariableEdit,
@@ -18,7 +18,18 @@ interface DataState {
   isLoading: boolean;
   isInitialized: boolean;
   lastSyncTime: number; // Track last server sync
-  syncConflicts: Array<{ storyId: string; storyName: string; localUpdatedAt: number; serverUpdatedAt: number; resolvedAt?: number; resolutionChoice?: 'keep-local' | 'use-server' }>; // Track conflicts
+  syncConflicts: Array<{
+    storyId: string;
+    storyName: string;
+    localUpdatedAt: number;
+    serverUpdatedAt: number;
+    localExcerpt?: string;
+    serverExcerpt?: string;
+    localLength?: number;
+    serverLength?: number;
+    resolvedAt?: number;
+    resolutionChoice?: 'keep-local' | 'use-server';
+  }>; // Track conflicts
   
   // Initialize from server
   initialize: () => Promise<void>;
@@ -152,9 +163,33 @@ export const useDataStore = create<DataState>()(
     (set, get) => {
       const saveStoryPayload = (story: Story) => story as unknown as { id: string; updatedAt?: number; [key: string]: unknown };
 
-      const queueStorySaveWithConflict = (story: Story) => {
-        saveStory(saveStoryPayload(story)).then((result) => {
+      const buildExcerpt = (text: string, maxLen = 300) => {
+        if (!text) return '';
+        if (text.length <= maxLen) return text;
+        return text.slice(text.length - maxLen);
+      };
+
+      const normalizeForCompare = (text: string) => (
+        text
+          .replace(/\r\n/g, '\n')
+          .replace(/[ \t]+\n/g, '\n')
+          .replace(/[ \t]+$/g, '')
+      );
+
+      const getStoryText = (story: Story) => {
+        if (story.content && story.content.trim().length > 0) return story.content;
+        if (story.sections && story.sections.length > 0) {
+          const derived = deriveFlatStoryContent(story.sections);
+          if (derived.trim().length > 0) return derived;
+        }
+        return story.htmlContent || '';
+      };
+
+      const queueStorySaveWithConflict = (story: Story, options?: { ifMatch?: number }) => {
+        saveStory(saveStoryPayload(story), options).then((result) => {
           if (result.conflict) {
+            const localText = getStoryText(story);
+            const localExcerpt = buildExcerpt(localText);
             set((state) => ({
               syncConflicts: [
                 ...state.syncConflicts.filter((c) => c.storyId !== story.id || c.resolvedAt),
@@ -163,9 +198,34 @@ export const useDataStore = create<DataState>()(
                   storyName: story.name || 'Untitled',
                   localUpdatedAt: story.updatedAt || 0,
                   serverUpdatedAt: result.serverUpdatedAt || 0,
+                  localExcerpt,
+                  localLength: localText.length,
                 },
               ],
             }));
+
+            fetchStory(story.id).then((serverStory) => {
+              if (!serverStory) return;
+              const normalized = normalizeStory(serverStory);
+              const serverText = getStoryText(normalized);
+              if (normalizeForCompare(serverText) === normalizeForCompare(localText)) {
+                set((state) => ({
+                  syncConflicts: state.syncConflicts.filter((c) => c.storyId !== story.id),
+                }));
+                return;
+              }
+              set((state) => ({
+                syncConflicts: state.syncConflicts.map((c) => (
+                  c.storyId === story.id
+                    ? {
+                        ...c,
+                        serverExcerpt: buildExcerpt(serverText),
+                        serverLength: serverText.length,
+                      }
+                    : c
+                )),
+              }));
+            });
           }
         });
       };
@@ -241,11 +301,20 @@ export const useDataStore = create<DataState>()(
               // Check if local was edited after last sync AND server has a different updatedAt
               if (local.updatedAt > get().lastSyncTime && serverStory.updatedAt > get().lastSyncTime
                 && local.updatedAt !== serverStory.updatedAt) {
+                const localText = local.content || local.htmlContent || '';
+                const serverText = serverStory.content || serverStory.htmlContent || '';
+                if (normalizeForCompare(serverText) === normalizeForCompare(localText)) {
+                  return null;
+                }
                 return {
                   storyId: local.id,
                   storyName: local.name,
                   localUpdatedAt: local.updatedAt,
                   serverUpdatedAt: serverStory.updatedAt,
+                  localExcerpt: buildExcerpt(localText),
+                  serverExcerpt: buildExcerpt(serverText),
+                  localLength: localText.length,
+                  serverLength: serverText.length,
                 };
               }
               return null;
@@ -288,20 +357,43 @@ export const useDataStore = create<DataState>()(
       },
       
       resolveConflict: (storyId: string, choice: 'keep-local' | 'use-server') => {
-        set(state => {
-          const updated = state.syncConflicts.map(c =>
-            c.storyId === storyId
-              ? { ...c, resolvedAt: Date.now(), resolutionChoice: choice }
-              : c
-          );
-          
-          return { syncConflicts: updated };
-        });
-        
-        // If user chose to use server, trigger a sync to get fresh data
-        if (choice === 'use-server') {
-          setTimeout(() => get().syncWithServer(), 100);
+        const conflict = get().syncConflicts.find((c) => c.storyId === storyId);
+        if (!conflict) return;
+
+        if (choice === 'keep-local') {
+          const localStory = get().stories.find((story) => story.id === storyId);
+          if (localStory) {
+            const bumpedStory = { ...localStory, updatedAt: Date.now() };
+            set((state) => ({
+              stories: state.stories.map((story) => (
+                story.id === storyId ? bumpedStory : story
+              )),
+              syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
+              lastSyncTime: Date.now(),
+            }));
+            saveStory(saveStoryPayload(bumpedStory), { force: true });
+            return;
+          }
         }
+
+        if (choice === 'use-server') {
+          fetchStory(storyId).then((serverStory) => {
+            if (!serverStory) return;
+            const normalized = normalizeStory(serverStory);
+            set((state) => ({
+              stories: state.stories.map((story) => (
+                story.id === storyId ? normalized : story
+              )),
+              syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
+              lastSyncTime: Date.now(),
+            }));
+          });
+          return;
+        }
+
+        set((state) => ({
+          syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
+        }));
       },
       
       clearResolvedConflicts: () => {
@@ -431,6 +523,7 @@ export const useDataStore = create<DataState>()(
       
       updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'content' | 'htmlContent' | 'totalCost' | 'totalTokens'>>) => {
         set((state) => {
+          const previousUpdatedAt = state.stories.find((story) => story.id === id)?.updatedAt;
           const mappedStories = state.stories.map((s) =>
             s.id === id
               ? {
@@ -455,7 +548,7 @@ export const useDataStore = create<DataState>()(
           // Save individual story to avoid overwriting concurrent edits on other devices
           const storyToSave = newStories.find(s => s.id === id);
           if (storyToSave) {
-            queueStorySaveWithConflict(storyToSave);
+            queueStorySaveWithConflict(storyToSave, { ifMatch: previousUpdatedAt });
           }
           
           return { stories: newStories };
@@ -514,6 +607,7 @@ export const useDataStore = create<DataState>()(
 
       updateStoryPromptConfig: (storyId: string, updates: Partial<Pick<Story, 'promptPlaceholders' | 'childPromptTemplate' | 'childResponseTemplate' | 'writingPlan'>>) => {
         set((state) => {
+          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const now = Date.now();
           const mappedStories = state.stories.map((story) => {
             if (story.id !== storyId) return story;
@@ -532,7 +626,9 @@ export const useDataStore = create<DataState>()(
             const storiesToSave = newStories.filter((story) => (
               story.id === updatedParent.id || story.parentStoryId === updatedParent.id
             ));
-            storiesToSave.forEach(queueStorySaveWithConflict);
+            storiesToSave.forEach((story) =>
+              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+            );
           }
           return { stories: newStories };
         });
@@ -540,6 +636,7 @@ export const useDataStore = create<DataState>()(
 
       applyWritingPlanFromStoryResponse: (storyId: string, assistantContent: string) => {
         set((state) => {
+          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const parentStory = state.stories.find((story) => story.id === storyId);
           if (!parentStory || parentStory.parentStoryId) return state;
 
@@ -560,7 +657,9 @@ export const useDataStore = create<DataState>()(
             const storiesToSave = newStories.filter((story) => (
               story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
             ));
-            storiesToSave.forEach(queueStorySaveWithConflict);
+            storiesToSave.forEach((story) =>
+              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+            );
           }
           return { stories: newStories };
         });
@@ -568,6 +667,7 @@ export const useDataStore = create<DataState>()(
 
       updateWritingPlanFromVariableEdit: (storyId: string, variableKey: string, value: string) => {
         set((state) => {
+          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const sourceStory = state.stories.find((story) => story.id === storyId);
           if (!sourceStory) return state;
 
@@ -617,7 +717,9 @@ export const useDataStore = create<DataState>()(
             const storiesToSave = syncedStories.filter((story) => (
               story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
             ));
-            storiesToSave.forEach(queueStorySaveWithConflict);
+            storiesToSave.forEach((story) =>
+              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+            );
           }
           return { stories: syncedStories };
         });

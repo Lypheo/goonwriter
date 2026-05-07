@@ -9,6 +9,14 @@ export function SyncConflictNotifier() {
   const syncConflicts = useDataStore((state) => state.syncConflicts);
   const resolveConflict = useDataStore((state) => state.resolveConflict);
   const clearResolvedConflicts = useDataStore((state) => state.clearResolvedConflicts);
+
+  const formatExcerpt = (text?: string) => {
+    if (!text) return '(empty)';
+    return text
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t');
+  };
   
   // Auto-cleanup old resolved conflicts
   useEffect(() => {
@@ -45,9 +53,25 @@ export function SyncConflictNotifier() {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-900 truncate">{conflict.storyName}</p>
                     <p className="text-xs text-gray-600">
-                      Local edited: {new Date(conflict.localUpdatedAt).toLocaleTimeString()} · 
-                      Server edited: {new Date(conflict.serverUpdatedAt).toLocaleTimeString()}
+                      Local edited: {new Date(conflict.localUpdatedAt).toLocaleString()} · 
+                      Server edited: {new Date(conflict.serverUpdatedAt).toLocaleString()}
                     </p>
+                    <div className="mt-1 grid grid-cols-1 gap-2 text-xs text-gray-700">
+                      <div>
+                        <span className="font-semibold text-gray-800">Local</span>
+                        {typeof conflict.localLength === 'number' ? ` (${conflict.localLength} chars)` : ''}
+                        <div className="font-mono whitespace-pre-wrap text-xs text-gray-700">
+                          {formatExcerpt(conflict.localExcerpt)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-800">Server</span>
+                        {typeof conflict.serverLength === 'number' ? ` (${conflict.serverLength} chars)` : ''}
+                        <div className="font-mono whitespace-pre-wrap text-xs text-gray-700">
+                          {formatExcerpt(conflict.serverExcerpt)}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex gap-2 ml-2 flex-shrink-0">
                     <button
