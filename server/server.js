@@ -12,6 +12,9 @@ const PORT = 3001;
 
 // Data directory
 const DATA_DIR = path.join(__dirname, 'data');
+const BACKUP_DIR = path.join(__dirname, 'dataBackup');
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
 
 // Serialize writes per file to avoid concurrent truncation/corruption.
 const writeLocks = new Map();
@@ -25,12 +28,69 @@ async function ensureDataDir() {
   }
 }
 
+async function ensureBackupDir() {
+  try {
+    await fs.access(BACKUP_DIR);
+  } catch {
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+  }
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
 // File paths
 const getFilePath = (type) => path.join(DATA_DIR, `${type}.json`);
+const getBackupPrefix = (type) => `${type}.json.bak-`;
+
+function parseBackupTimestamp(fileName, type) {
+  const prefix = getBackupPrefix(type);
+  if (!fileName.startsWith(prefix)) {
+    return null;
+  }
+  const ts = Number(fileName.slice(prefix.length));
+  return Number.isFinite(ts) ? ts : null;
+}
+
+async function pruneBackups(type) {
+  try {
+    await ensureBackupDir();
+    const entries = await fs.readdir(BACKUP_DIR);
+    const backups = entries
+      .map((fileName) => ({
+        fileName,
+        timestamp: parseBackupTimestamp(fileName, type),
+      }))
+      .filter((entry) => entry.timestamp !== null)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    if (backups.length === 0) {
+      return;
+    }
+
+    const keep = new Set();
+    backups.slice(0, 10).forEach((entry) => keep.add(entry.fileName));
+
+    const now = Date.now();
+    const newestOlderThanDay = backups.find((entry) => entry.timestamp <= now - DAY_MS);
+    if (newestOlderThanDay) {
+      keep.add(newestOlderThanDay.fileName);
+    }
+
+    const newestOlderThanWeek = backups.find((entry) => entry.timestamp <= now - WEEK_MS);
+    if (newestOlderThanWeek) {
+      keep.add(newestOlderThanWeek.fileName);
+    }
+
+    const deletions = backups
+      .filter((entry) => !keep.has(entry.fileName))
+      .map((entry) => fs.unlink(path.join(BACKUP_DIR, entry.fileName)).catch(() => undefined));
+
+    await Promise.all(deletions);
+  } catch (error) {
+    console.error(`Failed to prune backups for ${type}:`, error);
+  }
+}
 
 const ALLOWED_TYPES = new Set([
   'groups',
@@ -92,8 +152,10 @@ async function writeData(type, data) {
 
   try {
     await fs.access(filePath);
-    const backupPath = `${filePath}.bak-${Date.now()}`;
+    await ensureBackupDir();
+    const backupPath = path.join(BACKUP_DIR, `${type}.json.bak-${Date.now()}`);
     await fs.copyFile(filePath, backupPath);
+    await pruneBackups(type);
   } catch (error) {
     if (error.code !== 'ENOENT') {
       console.error(`Failed to backup ${filePath}:`, error);
@@ -269,4 +331,5 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`GoonWriter server running on http://localhost:${PORT}`);
   ensureDataDir();
+  ensureBackupDir();
 });
