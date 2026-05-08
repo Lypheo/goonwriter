@@ -220,14 +220,13 @@ function parseSSELine(line: string): CompletionChunk | null | 'done' {
 }
 
 export interface GenerationCallbacks {
-  onChunk: (text: string, chunk: CompletionChunk) => void;
+  onChunk: (data: { text: string; reasoning: string }, chunk: CompletionChunk) => void;
   onMetadata: (chunk: CompletionChunk) => void;
   onError: (error: string) => void;
   onComplete: () => void;
 }
 
 export interface StreamOptions {
-  autoThinkTags?: boolean;
   disableThinking?: boolean;
 }
 
@@ -527,8 +526,7 @@ export async function streamCompletion(
   prompt: string,
   samplingParams: SamplingParams,
   callbacks: GenerationCallbacks,
-  abortSignal: AbortSignal,
-  options: StreamOptions = {}
+  abortSignal: AbortSignal
 ): Promise<void> {
   const url = `${model.baseUrl.replace(/\/$/, '')}/completions`;
   const body = buildRequestBody(model, prompt, samplingParams);
@@ -558,9 +556,6 @@ export async function streamCompletion(
     
     const decoder = new TextDecoder();
     let buffer = '';
-    let isReasoning = false;
-    let hasOpenedThink = false;
-    let hasClosedThink = false;
     
     while (true) {
       const { done, value } = await reader.read();
@@ -591,37 +586,8 @@ export async function streamCompletion(
           const reasoning = (parsed.choices?.[0]?.reasoning as string) || '';
           const textContent = parsed.choices?.[0]?.text || '';
           
-          // Track reasoning state and auto-insert opening think tag if needed
-          if (reasoning && !isReasoning) {
-            isReasoning = true;
-          }
-          
-          // Build output text
-          let rawText = '';
-          
-          // Auto-insert opening think tag when reasoning starts
-          if (reasoning && options.autoThinkTags && !hasOpenedThink) {
-            rawText += SPECIAL_TOKENS.START_THINK;
-            hasOpenedThink = true;
-          }
-          
-          rawText += reasoning;
-          
-          // If we were reasoning and now have text content, prepend closing think tag
-          if (textContent) {
-            if (options.autoThinkTags && isReasoning && !hasClosedThink) {
-              rawText += SPECIAL_TOKENS.END_THINK;
-              hasClosedThink = true;
-            }
-            rawText += textContent;
-          }
-          
-          if (rawText) {
-            const text = replaceModelTokensWithPlaceholders(
-              rawText,
-              model.instructionTemplate
-            );
-            callbacks.onChunk(text, parsed);
+          if (reasoning || textContent) {
+            callbacks.onChunk({ text: textContent || '', reasoning }, parsed);
           }
         }
       }
@@ -635,37 +601,8 @@ export async function streamCompletion(
         const reasoning = (parsed.choices?.[0]?.reasoning as string) || '';
         const textContent = parsed.choices?.[0]?.text || '';
         
-        // Track reasoning state and auto-insert opening think tag if needed
-        if (reasoning && !isReasoning) {
-          isReasoning = true;
-        }
-        
-        // Build output text
-        let rawText = '';
-        
-        // Auto-insert opening think tag when reasoning starts
-        if (reasoning && options.autoThinkTags && !hasOpenedThink) {
-          rawText += SPECIAL_TOKENS.START_THINK;
-          hasOpenedThink = true;
-        }
-        
-        rawText += reasoning;
-        
-        // If we were reasoning and now have text content, prepend closing think tag
-        if (textContent) {
-          if (options.autoThinkTags && isReasoning && !hasClosedThink) {
-            rawText += SPECIAL_TOKENS.END_THINK;
-            hasClosedThink = true;
-          }
-          rawText += textContent;
-        }
-        
-        if (rawText) {
-          const text = replaceModelTokensWithPlaceholders(
-            rawText,
-            model.instructionTemplate
-          );
-          callbacks.onChunk(text, parsed);
+        if (reasoning || textContent) {
+          callbacks.onChunk({ text: textContent || '', reasoning }, parsed);
         }
       }
     }
@@ -762,9 +699,6 @@ export async function streamChatCompletion(
     
     const decoder = new TextDecoder();
     let buffer = '';
-    let isReasoning = false;
-    let hasOpenedThink = false;
-    let hasClosedThink = false;
     
     while (true) {
       const { done, value } = await reader.read();
@@ -798,37 +732,8 @@ export async function streamChatCompletion(
           const reasoning = parsed.choices?.[0]?.delta?.reasoning || '';
           const textContent = parsed.choices?.[0]?.delta?.content || '';
           
-          // Track reasoning state and auto-insert opening think tag if needed
-          if (reasoning && !isReasoning) {
-            isReasoning = true;
-          }
-          
-          // Build output text
-          let rawText = '';
-          
-          // Auto-insert opening think tag when reasoning starts
-          if (reasoning && options.autoThinkTags && !hasOpenedThink) {
-            rawText += SPECIAL_TOKENS.START_THINK;
-            hasOpenedThink = true;
-          }
-          
-          rawText += reasoning;
-          
-          // If we were reasoning and now have text content, prepend closing think tag
-          if (textContent) {
-            if (options.autoThinkTags && isReasoning && !hasClosedThink) {
-              rawText += SPECIAL_TOKENS.END_THINK;
-              hasClosedThink = true;
-            }
-            rawText += textContent;
-          }
-          
-          if (rawText) {
-            const text = replaceModelTokensWithPlaceholders(
-              rawText,
-              model.instructionTemplate
-            );
-            callbacks.onChunk(text, compatChunk);
+          if (reasoning || textContent) {
+            callbacks.onChunk({ text: textContent || '', reasoning }, compatChunk);
           }
         }
       }
@@ -844,37 +749,8 @@ export async function streamChatCompletion(
         const reasoning = parsed.choices?.[0]?.delta?.reasoning || '';
         const textContent = parsed.choices?.[0]?.delta?.content || '';
         
-        // Track reasoning state and auto-insert opening think tag if needed
-        if (reasoning && !isReasoning) {
-          isReasoning = true;
-        }
-        
-        // Build output text
-        let rawText = '';
-        
-        // Auto-insert opening think tag when reasoning starts
-        if (reasoning && options.autoThinkTags && !hasOpenedThink) {
-          rawText += SPECIAL_TOKENS.START_THINK;
-          hasOpenedThink = true;
-        }
-        
-        rawText += reasoning;
-        
-        // If we were reasoning and now have text content, prepend closing think tag
-        if (textContent) {
-          if (options.autoThinkTags && isReasoning && !hasClosedThink) {
-            rawText += SPECIAL_TOKENS.END_THINK;
-            hasClosedThink = true;
-          }
-          rawText += textContent;
-        }
-        
-        if (rawText) {
-          const text = replaceModelTokensWithPlaceholders(
-            rawText,
-            model.instructionTemplate
-          );
-          callbacks.onChunk(text, compatChunk);
+        if (reasoning || textContent) {
+          callbacks.onChunk({ text: textContent || '', reasoning }, compatChunk);
         }
       }
     }
@@ -892,3 +768,4 @@ export async function streamChatCompletion(
     }
   }
 }
+

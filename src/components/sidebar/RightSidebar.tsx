@@ -60,7 +60,6 @@ export function RightSidebar() {
   const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [modelDropdownMaxHeight, setModelDropdownMaxHeight] = useState(384);
-  const [autoThinkTags, setAutoThinkTags] = useState(true);
   const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   const [openRouterPricingByModelId, setOpenRouterPricingByModelId] = useState<Record<string, { prompt: number | null; completion: number | null }>>({});
@@ -216,43 +215,6 @@ export function RightSidebar() {
     }
   }, [enabledModels, selectedModelId, setSelectedModel]);
 
-  const parseStreamedAssistantContent = (
-    rawChunk: string,
-    state: { inThink: boolean; buffer: string }
-  ): { responsePart: string; thinkingPart: string } => {
-    state.buffer += rawChunk;
-    let responsePart = '';
-    let thinkingPart = '';
-
-    while (state.buffer.length > 0) {
-      if (state.inThink) {
-        const endIdx = state.buffer.indexOf('</think>');
-        if (endIdx === -1) {
-          thinkingPart += state.buffer;
-          state.buffer = '';
-          break;
-        }
-        thinkingPart += state.buffer.slice(0, endIdx);
-        state.buffer = state.buffer.slice(endIdx + '</think>'.length);
-        state.inThink = false;
-        continue;
-      }
-
-      const startIdx = state.buffer.indexOf('<think>');
-      if (startIdx === -1) {
-        responsePart += state.buffer;
-        state.buffer = '';
-        break;
-      }
-
-      responsePart += state.buffer.slice(0, startIdx);
-      state.buffer = state.buffer.slice(startIdx + '<think>'.length);
-      state.inThink = true;
-    }
-
-    return { responsePart, thinkingPart };
-  };
-
   const ensureAssistantTail = (inputSections: StorySection[]): { sections: StorySection[]; assistantIndex: number } => {
     const next = inputSections.map((section) => ({ ...section }));
     const lastIndex = next.length - 1;
@@ -273,6 +235,60 @@ export function RightSidebar() {
     next.push({ id: createId(), type: 'assistant', content: '', thinkingContent: '', collapsed: false });
     return { sections: next, assistantIndex: next.length - 1 };
   };
+
+  const splitStreamedContent = (
+    rawChunk: string,
+    state: { inThink: boolean; buffer: string },
+    thinkTagPrefix: string,
+    thinkTagSuffix: string
+  ): { responsePart: string; thinkingPart: string } => {
+    // Some providers emit raw <think> tags in the text stream; others emit only a closing tag.
+    if (!thinkTagPrefix || !thinkTagSuffix) {
+      return { responsePart: rawChunk, thinkingPart: '' };
+    }
+
+    state.buffer += rawChunk;
+    let responsePart = '';
+    let thinkingPart = '';
+
+    while (state.buffer.length > 0) {
+      if (state.inThink) {
+        // Continue consuming buffered text as reasoning until we see a closing think tag.
+        const endIdx = state.buffer.indexOf(thinkTagSuffix);
+        if (endIdx === -1) {
+          thinkingPart += state.buffer;
+          state.buffer = '';
+          break;
+        }
+        thinkingPart += state.buffer.slice(0, endIdx);
+        state.buffer = state.buffer.slice(endIdx + thinkTagSuffix.length);
+        state.inThink = false;
+        continue;
+      }
+
+      const startIdx = state.buffer.indexOf(thinkTagPrefix);
+      const endIdx = state.buffer.indexOf(thinkTagSuffix);
+
+      if (endIdx !== -1 && (startIdx === -1 || endIdx < startIdx)) {
+        // Handle streams that start with "reasoning</think>" (no opening tag).
+        thinkingPart += state.buffer.slice(0, endIdx);
+        state.buffer = state.buffer.slice(endIdx + thinkTagSuffix.length);
+        continue;
+      }
+
+      if (startIdx === -1) {
+        responsePart += state.buffer;
+        state.buffer = '';
+        break;
+      }
+
+      responsePart += state.buffer.slice(0, startIdx);
+      state.buffer = state.buffer.slice(startIdx + thinkTagPrefix.length);
+      state.inThink = true;
+    }
+
+    return { responsePart, thinkingPart };
+  };
   
   const handleGenerate = useCallback(async () => {
     if (!selectedModel || !selectedStory || isGenerating) return;
@@ -282,7 +298,9 @@ export function RightSidebar() {
     const assistantIndex = ensured.assistantIndex;
     const assistantBaseContent = workingSections[assistantIndex].content || '';
     const assistantBaseThinking = workingSections[assistantIndex].thinkingContent || '';
-    const streamState = { inThink: false, buffer: '' };
+    const thinkTagPrefix = selectedModel.instructionTemplate.thinkTagPrefix || '<think>';
+    const thinkTagSuffix = selectedModel.instructionTemplate.thinkTagSuffix || '</think>';
+    const thinkState = { inThink: false, buffer: '' };
     let generatedResponse = '';
     let generatedThinking = '';
 
@@ -306,10 +324,14 @@ export function RightSidebar() {
     const startTime = Date.now();
     
     const callbacks = {
-      onChunk: (text: string) => {
-        const parsed = parseStreamedAssistantContent(text, streamState);
+      onChunk: (data: { text: string; reasoning: string }) => {
+        // Split raw text into response vs reasoning, then merge in explicit reasoning field if provided.
+        const parsed = splitStreamedContent(data.text, thinkState, thinkTagPrefix, thinkTagSuffix);
         generatedResponse += parsed.responsePart;
         generatedThinking += parsed.thinkingPart;
+        if (data.reasoning) {
+          generatedThinking += data.reasoning;
+        }
 
         wordCount = `${generatedResponse} ${generatedThinking}`.split(/\s+/).filter((w) => w.length > 0).length;
         
@@ -359,13 +381,13 @@ export function RightSidebar() {
         stopGeneration();
       },
       onComplete: () => {
-        if (streamState.buffer.length > 0) {
-          if (streamState.inThink) {
-            generatedThinking += streamState.buffer;
+        if (thinkState.buffer.length > 0) {
+          if (thinkState.inThink) {
+            generatedThinking += thinkState.buffer;
           } else {
-            generatedResponse += streamState.buffer;
+            generatedResponse += thinkState.buffer;
           }
-          streamState.buffer = '';
+          thinkState.buffer = '';
           workingSections = workingSections.map((section, index) =>
             index === assistantIndex
               ? {
@@ -392,7 +414,7 @@ export function RightSidebar() {
           samplingParams,
           callbacks,
           abortController.signal,
-          { autoThinkTags, disableThinking }
+          { disableThinking }
         );
       } else {
         await streamCompletion(
@@ -403,8 +425,7 @@ export function RightSidebar() {
           }),
           samplingParams,
           callbacks,
-          abortController.signal,
-          { autoThinkTags }
+          abortController.signal
         );
       }
     } catch (error) {
@@ -413,7 +434,7 @@ export function RightSidebar() {
       });
       stopGeneration();
     }
-  }, [selectedModel, selectedStory, stories, isGenerating, samplingParams, autoThinkTags, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory, applyWritingPlanFromStoryResponse]);
+  }, [selectedModel, selectedStory, stories, isGenerating, samplingParams, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory, applyWritingPlanFromStoryResponse]);
   
   // Ctrl+Enter hotkey for generate/stop
   useEffect(() => {
@@ -648,18 +669,6 @@ export function RightSidebar() {
       
       {/* Generate Button */}
       <div className="p-3 border-b border-gray-200">
-        <label 
-          className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
-          title="Automatically insert opening <think> when reasoning starts and closing </think> when reasoning ends. Needed because most providers don't transmit think tokens properly."
-        >
-          <input
-            type="checkbox"
-            checked={autoThinkTags}
-            onChange={(e) => setAutoThinkTags(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          <span>Auto think tags</span>
-        </label>
         <label 
           className="flex items-center gap-2 mb-2 text-sm text-gray-600 cursor-pointer"
           title="Use /chat/completions endpoint instead of /completions. Requires at least one non-empty user section."

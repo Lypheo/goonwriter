@@ -29,20 +29,6 @@ function createSection(type: StorySection['type'], content = '', thinkingContent
   };
 }
 
-function splitThinkContent(text: string): { content: string; thinkingContent: string } {
-  const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-  const thoughtParts: string[] = [];
-  const contentWithoutThink = text.replace(thinkRegex, (_, thought: string) => {
-    thoughtParts.push((thought || '').trim());
-    return '';
-  });
-
-  return {
-    content: contentWithoutThink.trim(),
-    thinkingContent: thoughtParts.filter(Boolean).join('\n\n').trim(),
-  };
-}
-
 function composeAssistantPromptContent(
   section: StorySection,
   includeThinking: boolean,
@@ -86,9 +72,7 @@ function ensureSectionsShape(sections: StorySection[]): StorySection[] {
       id: section.id || uuidv4(),
       type: section.type,
       content: section.content || '',
-      thinkingContent: section.type === 'assistant'
-        ? section.thinkingContent || splitThinkContent(section.content || '').thinkingContent
-        : '',
+      thinkingContent: section.type === 'assistant' ? section.thinkingContent || '' : '',
       collapsed: section.collapsed ?? false,
     }));
 
@@ -109,56 +93,6 @@ function ensureSectionsShape(sections: StorySection[]): StorySection[] {
   }
 
   return normalized;
-}
-
-function parseLegacyTokenizedContent(content: string): StorySection[] {
-  if (!content.trim()) {
-    return createInitialSections();
-  }
-
-  const sections: StorySection[] = [];
-  let rest = content;
-
-  const sysStart = SPECIAL_TOKENS.START_SYS_PROMPT;
-  const sysEnd = SPECIAL_TOKENS.END_SYS_PROMPT;
-  if (rest.includes(sysStart)) {
-    const startIdx = rest.indexOf(sysStart);
-    const endIdx = rest.indexOf(sysEnd, startIdx + sysStart.length);
-    if (startIdx !== -1 && endIdx !== -1) {
-      const sysContent = rest.slice(startIdx + sysStart.length, endIdx).trim();
-      sections.push(createSection('system', sysContent));
-      rest = rest.slice(endIdx + sysEnd.length);
-    }
-  }
-
-  if (sections.length === 0) {
-    sections.push(createSection('system', ''));
-  }
-
-  const blockRegex = /<<start_(user|ai)>>([\s\S]*?)(?=(<<start_(user|ai)>>)|$)/g;
-  let match: RegExpExecArray | null;
-  while ((match = blockRegex.exec(rest)) !== null) {
-    const role = match[1];
-    let raw = match[2] ?? '';
-    if (role === 'user') {
-      raw = raw.replace(new RegExp(`${SPECIAL_TOKENS.END_USER}$`), '');
-      sections.push(createSection('user', raw.trim()));
-    } else {
-      raw = raw.replace(new RegExp(`${SPECIAL_TOKENS.END_AI}$`), '');
-      const split = splitThinkContent(raw.trim());
-      sections.push(createSection('assistant', split.content, split.thinkingContent));
-    }
-  }
-
-  if (sections.filter((section) => section.type !== 'system').length === 0) {
-    const fallback = content.trim();
-    if (fallback.length > 0) {
-      sections.push(createSection('user', fallback));
-      sections.push(createSection('assistant', ''));
-    }
-  }
-
-  return ensureSectionsShape(sections);
 }
 
 export function storySectionsToChatMessages(sections: StorySection[]): ChatMessage[] {
@@ -220,8 +154,8 @@ export function deriveFlatStoryContent(sections: StorySection[]): string {
 }
 
 export function normalizeStory(story: Story): Story {
-  const { content: legacyContent = '', ...rest } = story as Story & { content?: string };
-  const sections = story.sections?.length ? ensureSectionsShape(story.sections) : parseLegacyTokenizedContent(legacyContent);
+  const { content: _legacyContent, ...rest } = story as Story & { content?: string };
+  const sections = story.sections?.length ? ensureSectionsShape(story.sections) : createInitialSections();
 
   return {
     ...rest,
