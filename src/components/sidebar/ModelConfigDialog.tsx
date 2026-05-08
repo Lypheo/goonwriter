@@ -245,8 +245,14 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   }, [formData, selectedId]);
   
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Model Configuration" size="xl">
-      <div className="flex h-[60vh] -m-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Model Configuration"
+      size="xl"
+      bodyClassName="max-h-[85vh] overflow-hidden"
+    >
+      <div className="flex h-[75vh] -m-4">
         {/* Left panel - Model list */}
         <div className="w-56 flex-shrink-0 border-r border-gray-200 flex flex-col bg-gray-50">
           {/* List header with actions */}

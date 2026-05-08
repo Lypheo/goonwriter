@@ -177,9 +177,10 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  bodyClassName?: string;
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, size = 'md', bodyClassName }: ModalProps) {
   if (!isOpen) return null;
   
   const sizeClasses = {
@@ -210,7 +211,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
               </svg>
             </button>
           </div>
-          <div className="p-4 max-h-[70vh] overflow-y-auto">{children}</div>
+          <div className={`p-4 max-h-[70vh] overflow-y-auto ${bodyClassName ?? ''}`}>{children}</div>
         </div>
       </div>
     </div>
