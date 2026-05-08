@@ -96,52 +96,26 @@ export async function saveData<T>(type: string, data: T): Promise<boolean> {
   }
 }
 
-export async function fetchStory(id: string) {
-  try {
-    const response = await fetch(`${API_BASE}/stories/${id}`);
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    console.error('Failed to fetch story:', error);
-    return null;
-  }
-}
-
 export async function saveStory(
-  story: { id: string; updatedAt?: number; [key: string]: unknown },
-  options?: { force?: boolean; ifMatch?: number }
-): Promise<{ success: boolean; conflict?: boolean; serverUpdatedAt?: number }> {
+  story: { id: string; updatedAt?: number; [key: string]: unknown }
+): Promise<boolean> {
   try {
-    const matchVersion = options?.ifMatch;
     const response = await fetch(`${API_BASE}/stories/${story.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        // Optimistic concurrency control: send If-Match with current version
-        ...(!options?.force && typeof matchVersion === 'number'
-          ? { 'If-Match': String(matchVersion) }
-          : {}),
       },
       body: JSON.stringify(story),
     });
-    
-    if (response.status === 409) {
-      // Conflict: server version is different
-      const data = await response.json();
-      console.warn('Story save conflict - server version differs:', data);
-      return { success: false, conflict: true, serverUpdatedAt: data.serverUpdatedAt };
-    }
-    
+
     if (!response.ok) {
       throw new Error(`HTTP error ${response.status}`);
     }
-    
-    return { success: true };
+
+    return true;
   } catch (error) {
     console.error('Failed to save story:', error);
-    return { success: false };
+    return false;
   }
 }
 

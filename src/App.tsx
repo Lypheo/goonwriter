@@ -4,7 +4,6 @@ import { ContentsSidebar } from './components/sidebar/ContentsSidebar';
 import { PromptEngineeringSidebar } from './components/sidebar/PromptEngineeringSidebar';
 import { RightSidebar } from './components/sidebar/RightSidebar';
 import { StoryEditor } from './components/editor/StoryEditor';
-import { SyncConflictNotifier } from './components/SyncConflictNotifier';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
 
 const LEFT_PANEL_WIDTH_STORAGE_KEY = 'goonwriter:leftPanelWidth';
@@ -33,6 +32,7 @@ function readStoredMode(): LeftPanelMode {
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isDataInitialized = useDataStore((state) => state.isInitialized);
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => readStoredNumber(LEFT_PANEL_WIDTH_STORAGE_KEY, 540));
   const [libraryPanelHeight, setLibraryPanelHeight] = useState(() => readStoredNumber(LIBRARY_PANEL_HEIGHT_STORAGE_KEY, 420));
   const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>(() => readStoredMode());
@@ -68,16 +68,55 @@ function App() {
     initializeStores();
   }, []);
 
-  // Periodic sync with server to detect and handle remote changes
+  // Sync every 5s when visible and idle for 30s; sync immediately on tab focus.
   useEffect(() => {
-    if (!useDataStore.getState().isInitialized) return;
-    
-    const syncInterval = setInterval(() => {
-      useDataStore.getState().syncWithServer();
-    }, 30000); // Sync every 30 seconds
-    
-    return () => clearInterval(syncInterval);
-  }, []);
+    if (!isDataInitialized) return;
+
+    const IDLE_THRESHOLD_MS = 30000;
+    const SYNC_INTERVAL_MS = 5000;
+    let lastActivityAt = Date.now();
+
+    const markActivity = () => {
+      lastActivityAt = Date.now();
+    };
+
+    const tryIdleSync = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastActivityAt < IDLE_THRESHOLD_MS) return;
+      const store = useDataStore.getState();
+      if (store.hasPendingStorySaves()) return;
+      void store.syncWithServer();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const store = useDataStore.getState();
+      const syncAfterFlush = async () => {
+        if (store.hasPendingStorySaves()) {
+          await store.flushPendingStorySaves();
+        }
+        await store.syncWithServer();
+      };
+      void syncAfterFlush();
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      'mousedown',
+      'mousemove',
+      'keydown',
+      'scroll',
+      'touchstart',
+    ];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, markActivity, true));
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const syncInterval = setInterval(tryIdleSync, SYNC_INTERVAL_MS);
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, markActivity, true));
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(syncInterval);
+    };
+  }, [isDataInitialized]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -188,7 +227,6 @@ function App() {
   
   return (
     <div className="h-screen flex overflow-hidden bg-white">
-      <SyncConflictNotifier />
       {/* Left Sidebar Panel */}
       <div style={{ width: `${leftPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0">
         <div className="shrink-0 border-b border-gray-200 bg-gray-50 px-2 py-1.5">

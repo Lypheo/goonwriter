@@ -169,7 +169,7 @@ app.get('/api/stories/:id', async (req, res) => {
   }
 });
 
-// Update a specific story with optimistic concurrency control
+// Update a specific story
 app.put('/api/stories/:id', async (req, res) => {
   try {
     let stories = await readData('stories');
@@ -177,21 +177,7 @@ app.put('/api/stories/:id', async (req, res) => {
       stories = [];
     }
     const index = stories.findIndex(s => s.id === req.params.id);
-    
-    // Check for version conflict if If-Match header provided (optimistic concurrency)
-    if (req.get('If-Match')) {
-      const clientVersion = parseInt(req.get('If-Match'), 10);
-      const existing = stories[index];
-      if (existing && existing.updatedAt && existing.updatedAt !== clientVersion) {
-        // Version mismatch - conflict detected
-        return res.status(409).json({
-          error: 'Version conflict: story was modified on server',
-          serverUpdatedAt: existing.updatedAt,
-          clientVersion,
-        });
-      }
-    }
-    
+
     if (index === -1) {
       stories.push(req.body);
     } else {

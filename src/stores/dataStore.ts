@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Group, Collection, Story } from '../types';
-import { fetchData, saveData, saveStory, deleteStory, fetchStory } from '../services/apiService';
-import { createInitialSections, deriveFlatStoryContent, normalizeStory } from '../services/storySections';
+import { fetchData, saveData, saveStory, deleteStory } from '../services/apiService';
+import { createInitialSections, normalizeStory } from '../services/storySections';
 import {
   applyMutableVariableEdit,
   getLatestValidWritingPlanInStory,
@@ -17,28 +17,13 @@ interface DataState {
   stories: Story[];
   isLoading: boolean;
   isInitialized: boolean;
-  lastSyncTime: number; // Track last server sync
-  syncConflicts: Array<{
-    storyId: string;
-    storyName: string;
-    localUpdatedAt: number;
-    serverUpdatedAt: number;
-    localExcerpt?: string;
-    serverExcerpt?: string;
-    localLength?: number;
-    serverLength?: number;
-    resolvedAt?: number;
-    resolutionChoice?: 'keep-local' | 'use-server';
-  }>; // Track conflicts
+  hasPendingStorySaves: () => boolean;
+  flushPendingStorySaves: () => Promise<void>;
   
   // Initialize from server
   initialize: () => Promise<void>;
   // Periodic sync to detect remote changes
   syncWithServer: () => Promise<void>;
-  // Acknowledge/resolve a conflict
-  resolveConflict: (storyId: string, choice: 'keep-local' | 'use-server') => void;
-  // Clear old conflicts
-  clearResolvedConflicts: () => void;
   
   // Group CRUD
   createGroup: (name: string) => Group;
@@ -158,72 +143,52 @@ function syncPlanChildren(stories: Story[], parentStory: Story, now: number): St
 export const useDataStore = create<DataState>()(
   subscribeWithSelector(
     (set, get) => {
+      const SAVE_DEBOUNCE_MS = 500;
+      const SAVE_MAX_WAIT_MS = 3000;
+      const storySaveTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+      const storyMaxWaitTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+      const pendingStorySaves = new Map<string, Story>();
       const saveStoryPayload = (story: Story) => story as unknown as { id: string; updatedAt?: number; [key: string]: unknown };
-
-      const buildExcerpt = (text: string, maxLen = 300) => {
-        if (!text) return '';
-        if (text.length <= maxLen) return text;
-        return text.slice(text.length - maxLen);
-      };
-
-      const normalizeForCompare = (text: string) => (
-        text
-          .replace(/\r\n/g, '\n')
-          .replace(/[ \t]+\n/g, '\n')
-          .replace(/[ \t]+$/g, '')
-      );
-
-      const getStoryText = (story: Story) => {
-        if (story.sections && story.sections.length > 0) {
-          const derived = deriveFlatStoryContent(story.sections);
-          if (derived.trim().length > 0) return derived;
+      const flushStorySave = async (storyId: string) => {
+        const pending = pendingStorySaves.get(storyId);
+        if (!pending) return;
+        pendingStorySaves.delete(storyId);
+        storySaveTimeouts.delete(storyId);
+        const maxWaitTimeout = storyMaxWaitTimeouts.get(storyId);
+        if (maxWaitTimeout) {
+          clearTimeout(maxWaitTimeout);
+          storyMaxWaitTimeouts.delete(storyId);
         }
-        return (story as { content?: string }).content || '';
+        await saveStory(saveStoryPayload(pending));
       };
 
-      const queueStorySaveWithConflict = (story: Story, options?: { ifMatch?: number }) => {
-        saveStory(saveStoryPayload(story), options).then((result) => {
-          if (result.conflict) {
-            const localText = getStoryText(story);
-            const localExcerpt = buildExcerpt(localText);
-            set((state) => ({
-              syncConflicts: [
-                ...state.syncConflicts.filter((c) => c.storyId !== story.id || c.resolvedAt),
-                {
-                  storyId: story.id,
-                  storyName: story.name || 'Untitled',
-                  localUpdatedAt: story.updatedAt || 0,
-                  serverUpdatedAt: result.serverUpdatedAt || 0,
-                  localExcerpt,
-                  localLength: localText.length,
-                },
-              ],
-            }));
+      const queueStorySave = (story: Story) => {
+        pendingStorySaves.set(story.id, story);
 
-            fetchStory(story.id).then((serverStory) => {
-              if (!serverStory) return;
-              const normalized = normalizeStory(serverStory);
-              const serverText = getStoryText(normalized);
-              if (normalizeForCompare(serverText) === normalizeForCompare(localText)) {
-                set((state) => ({
-                  syncConflicts: state.syncConflicts.filter((c) => c.storyId !== story.id),
-                }));
-                return;
-              }
-              set((state) => ({
-                syncConflicts: state.syncConflicts.map((c) => (
-                  c.storyId === story.id
-                    ? {
-                        ...c,
-                        serverExcerpt: buildExcerpt(serverText),
-                        serverLength: serverText.length,
-                      }
-                    : c
-                )),
-              }));
-            });
-          }
-        });
+        const existing = storySaveTimeouts.get(story.id);
+        if (existing) {
+          clearTimeout(existing);
+        }
+
+        if (!storyMaxWaitTimeouts.has(story.id)) {
+          const maxWaitTimeout = setTimeout(() => {
+            void flushStorySave(story.id);
+          }, SAVE_MAX_WAIT_MS);
+          storyMaxWaitTimeouts.set(story.id, maxWaitTimeout);
+        }
+
+        const timeout = setTimeout(() => {
+          storySaveTimeouts.delete(story.id);
+          void flushStorySave(story.id);
+        }, SAVE_DEBOUNCE_MS);
+        storySaveTimeouts.set(story.id, timeout);
+      };
+
+      const hasPendingStorySaves = () => pendingStorySaves.size > 0;
+
+      const flushPendingStorySaves = async () => {
+        const storyIds = Array.from(pendingStorySaves.keys());
+        await Promise.all(storyIds.map((storyId) => flushStorySave(storyId)));
       };
 
       const queueStoryDeletes = (ids: string[]) => {
@@ -238,8 +203,8 @@ export const useDataStore = create<DataState>()(
       stories: [],
       isLoading: true,
       isInitialized: false,
-      lastSyncTime: 0,
-      syncConflicts: [],
+      hasPendingStorySaves,
+      flushPendingStorySaves,
       
       initialize: async () => {
         if (get().isInitialized) return;
@@ -265,7 +230,6 @@ export const useDataStore = create<DataState>()(
             stories: normalizedStories,
             isLoading: false,
             isInitialized: true,
-            lastSyncTime: Date.now(),
           });
         } catch (error) {
           console.error('Failed to initialize data:', error);
@@ -274,7 +238,7 @@ export const useDataStore = create<DataState>()(
         }
       },
       
-      // Periodic sync with server to detect remote changes
+      // Periodic sync with server to pull remote changes
       syncWithServer: async () => {
         try {
           const [groups, collections, stories] = await Promise.all([
@@ -286,116 +250,14 @@ export const useDataStore = create<DataState>()(
           if (!stories) return;
           
           const normalizedServerStories = stories.map((story) => normalizeStory(story));
-          const localStories = get().stories;
-          
-          // Detect conflicts: local story was edited since last sync and server version differs
-          const conflicts = localStories
-            .map(local => {
-              const serverStory = normalizedServerStories.find(s => s.id === local.id);
-              if (!serverStory) return null; // Story deleted on server
-              
-              // Check if local was edited after last sync AND server has a different updatedAt
-              if (local.updatedAt > get().lastSyncTime && serverStory.updatedAt > get().lastSyncTime
-                && local.updatedAt !== serverStory.updatedAt) {
-                const localText = getStoryText(local);
-                const serverText = getStoryText(serverStory);
-                if (normalizeForCompare(serverText) === normalizeForCompare(localText)) {
-                  return null;
-                }
-                return {
-                  storyId: local.id,
-                  storyName: local.name,
-                  localUpdatedAt: local.updatedAt,
-                  serverUpdatedAt: serverStory.updatedAt,
-                  localExcerpt: buildExcerpt(localText),
-                  serverExcerpt: buildExcerpt(serverText),
-                  localLength: localText.length,
-                  serverLength: serverText.length,
-                };
-              }
-              return null;
-            })
-            .filter((c): c is NonNullable<typeof c> => c !== null);
-          
-          // If conflicts detected, notify user and don't overwrite
-          if (conflicts.length > 0) {
-            console.warn('Sync conflicts detected:', conflicts);
-            const conflictIds = new Set(conflicts.map(c => c.storyId));
-            
-            set(state => ({
-              syncConflicts: [
-                ...state.syncConflicts.filter(c => c.resolvedAt),
-                ...conflicts,
-              ],
-            }));
-            
-            // Don't sync conflicting stories
-            const safeSyncedStories = normalizedServerStories.filter(s => !conflictIds.has(s.id));
-            set({
-              groups: groups || [],
-              collections: collections || [],
-              stories: [...safeSyncedStories, ...localStories.filter(s => conflictIds.has(s.id))],
-              lastSyncTime: Date.now(),
-            });
-          } else {
-            // No conflicts - safe to update all data
-            set({
-              groups: groups || [],
-              collections: collections || [],
-              stories: normalizedServerStories,
-              lastSyncTime: Date.now(),
-              syncConflicts: [], // Clear any old resolved conflicts
-            });
-          }
+          set({
+            groups: groups || [],
+            collections: collections || [],
+            stories: normalizedServerStories,
+          });
         } catch (error) {
           console.error('Failed to sync with server:', error);
         }
-      },
-      
-      resolveConflict: (storyId: string, choice: 'keep-local' | 'use-server') => {
-        const conflict = get().syncConflicts.find((c) => c.storyId === storyId);
-        if (!conflict) return;
-
-        if (choice === 'keep-local') {
-          const localStory = get().stories.find((story) => story.id === storyId);
-          if (localStory) {
-            const bumpedStory = { ...localStory, updatedAt: Date.now() };
-            set((state) => ({
-              stories: state.stories.map((story) => (
-                story.id === storyId ? bumpedStory : story
-              )),
-              syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
-              lastSyncTime: Date.now(),
-            }));
-            saveStory(saveStoryPayload(bumpedStory), { force: true });
-            return;
-          }
-        }
-
-        if (choice === 'use-server') {
-          fetchStory(storyId).then((serverStory) => {
-            if (!serverStory) return;
-            const normalized = normalizeStory(serverStory);
-            set((state) => ({
-              stories: state.stories.map((story) => (
-                story.id === storyId ? normalized : story
-              )),
-              syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
-              lastSyncTime: Date.now(),
-            }));
-          });
-          return;
-        }
-
-        set((state) => ({
-          syncConflicts: state.syncConflicts.filter((c) => c.storyId !== storyId),
-        }));
-      },
-      
-      clearResolvedConflicts: () => {
-        set(state => ({
-          syncConflicts: state.syncConflicts.filter(c => !c.resolvedAt),
-        }));
       },
       
       // Group CRUD
@@ -509,7 +371,7 @@ export const useDataStore = create<DataState>()(
         };
         set((state) => {
           const newStories = [...state.stories, story];
-          queueStorySaveWithConflict(story);
+          queueStorySave(story);
           return { stories: newStories };
         });
         return story;
@@ -517,7 +379,6 @@ export const useDataStore = create<DataState>()(
       
       updateStory: (id: string, updates: Partial<Pick<Story, 'name' | 'collectionId' | 'sections' | 'totalCost' | 'totalTokens'>>) => {
         set((state) => {
-          const previousUpdatedAt = state.stories.find((story) => story.id === id)?.updatedAt;
           const mappedStories = state.stories.map((s) =>
             s.id === id
               ? {
@@ -536,7 +397,7 @@ export const useDataStore = create<DataState>()(
           // Save individual story to avoid overwriting concurrent edits on other devices
           const storyToSave = newStories.find(s => s.id === id);
           if (storyToSave) {
-            queueStorySaveWithConflict(storyToSave, { ifMatch: previousUpdatedAt });
+            queueStorySave(storyToSave);
           }
           
           return { stories: newStories };
@@ -585,7 +446,7 @@ export const useDataStore = create<DataState>()(
         };
         set((state) => {
           const newStories = [...state.stories, duplicated];
-          queueStorySaveWithConflict(duplicated);
+          queueStorySave(duplicated);
           return { stories: newStories };
         });
         return duplicated;
@@ -593,7 +454,6 @@ export const useDataStore = create<DataState>()(
 
       updateStoryPromptConfig: (storyId: string, updates: Partial<Pick<Story, 'promptPlaceholders' | 'childPromptTemplate' | 'childResponseTemplate' | 'writingPlan'>>) => {
         set((state) => {
-          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const now = Date.now();
           const mappedStories = state.stories.map((story) => {
             if (story.id !== storyId) return story;
@@ -613,7 +473,7 @@ export const useDataStore = create<DataState>()(
               story.id === updatedParent.id || story.parentStoryId === updatedParent.id
             ));
             storiesToSave.forEach((story) =>
-              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+              queueStorySave(story)
             );
           }
           return { stories: newStories };
@@ -622,7 +482,6 @@ export const useDataStore = create<DataState>()(
 
       applyWritingPlanFromStoryResponse: (storyId: string, assistantContent: string) => {
         set((state) => {
-          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const parentStory = state.stories.find((story) => story.id === storyId);
           if (!parentStory || parentStory.parentStoryId) return state;
 
@@ -644,7 +503,7 @@ export const useDataStore = create<DataState>()(
               story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
             ));
             storiesToSave.forEach((story) =>
-              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+              queueStorySave(story)
             );
           }
           return { stories: newStories };
@@ -653,7 +512,6 @@ export const useDataStore = create<DataState>()(
 
       updateWritingPlanFromVariableEdit: (storyId: string, variableKey: string, value: string) => {
         set((state) => {
-          const previousById = new Map(state.stories.map((story) => [story.id, story.updatedAt]));
           const sourceStory = state.stories.find((story) => story.id === storyId);
           if (!sourceStory) return state;
 
@@ -702,7 +560,7 @@ export const useDataStore = create<DataState>()(
               story.id === refreshedParent.id || story.parentStoryId === refreshedParent.id
             ));
             storiesToSave.forEach((story) =>
-              queueStorySaveWithConflict(story, { ifMatch: previousById.get(story.id) })
+              queueStorySave(story)
             );
           }
           return { stories: syncedStories };
