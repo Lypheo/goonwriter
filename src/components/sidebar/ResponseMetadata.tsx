@@ -1,7 +1,29 @@
-import { useGenerationStore } from '../../stores';
+import { useGenerationStore, useModelStore } from '../../stores';
+import { appendUniqueListValues } from './providerListUtils';
 
 export function ResponseMetadata() {
   const { responseMetadata, isGenerating } = useGenerationStore();
+  const { selectedModelId, models, updateModel } = useModelStore();
+  const selectedModel = selectedModelId ? models.find((model) => model.id === selectedModelId) : null;
+  const providerName = responseMetadata?.provider?.trim() ?? '';
+  const isProviderBanned = !!selectedModel && !!providerName
+    && selectedModel.instructionTemplate.bannedProviders.includes(providerName);
+
+  const handleBanProvider = () => {
+    if (!selectedModel || !providerName) return;
+    const nextBanned = appendUniqueListValues(
+      selectedModel.instructionTemplate.bannedProviders,
+      providerName
+    );
+    if (nextBanned === selectedModel.instructionTemplate.bannedProviders) return;
+
+    updateModel(selectedModel.id, {
+      instructionTemplate: {
+        ...selectedModel.instructionTemplate,
+        bannedProviders: nextBanned,
+      },
+    });
+  };
   
   if (!responseMetadata) {
     return (
@@ -56,9 +78,22 @@ export function ResponseMetadata() {
         
         {/* Provider & Model */}
         {responseMetadata.provider && (
-          <div className="flex justify-between">
+          <div className="flex items-center justify-between">
             <span className="text-gray-500">Provider:</span>
-            <span className="font-medium">{responseMetadata.provider}</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{responseMetadata.provider}</span>
+              {selectedModel && (
+                <button
+                  type="button"
+                  onClick={handleBanProvider}
+                  disabled={!providerName || isProviderBanned}
+                  className="px-2 py-0.5 text-[11px] font-medium rounded border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                  title={isProviderBanned ? 'Provider is already banned for this model' : 'Add provider to banned list'}
+                >
+                  Ban
+                </button>
+              )}
+            </div>
           </div>
         )}
         
