@@ -73,6 +73,8 @@ export interface ModelConfig {
   chatOnly: boolean;
   disableThinkingPrefill: string;
   instructionTemplate: InstructionTemplate;
+  selectedProvider?: string | null;
+  chatCompletionByProvider?: Record<string, boolean>;
   createdAt: number;
   updatedAt: number;
 }
@@ -86,7 +88,6 @@ export interface InstructionTemplate {
   assistantTagSuffix: string;
   thinkTagPrefix: string;
   thinkTagSuffix: string;
-  allowedProviders: string[];
   bannedProviders: string[];
   allowedQuantizations: string[];
   sortOrder: 'price' | 'throughput' | 'latency' | null;
@@ -265,7 +266,6 @@ export interface CompletionModelConfig {
   baseUrl: string;
   token: string;
   modelId: string;
-  allowedProviders: string[];
   bannedProviders: string[];
   allowedQuantizations: string[];
   sortOrder: 'price' | 'throughput' | 'latency' | null;

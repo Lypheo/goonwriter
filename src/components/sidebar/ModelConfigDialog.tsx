@@ -68,7 +68,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   });
   
   // Local draft state for list-entry inputs
-  const [allowedProvidersDraft, setAllowedProvidersDraft] = useState('');
   const [bannedProvidersDraft, setBannedProvidersDraft] = useState('');
   const [allowedQuantizationsDraft, setAllowedQuantizationsDraft] = useState('');
   
@@ -104,7 +103,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
         disableThinkingPrefill: '</think>',
         instructionTemplate: { ...defaultInstructionTemplate },
       });
-      setAllowedProvidersDraft('');
       setBannedProvidersDraft('');
       setAllowedQuantizationsDraft('');
       return;
@@ -125,7 +123,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
       disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
       instructionTemplate: { ...model.instructionTemplate },
     });
-    setAllowedProvidersDraft('');
     setBannedProvidersDraft('');
     setAllowedQuantizationsDraft('');
   }, [selectedId, models]);
@@ -210,7 +207,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
     (value ?? '').replace(/\\n/g, '\n');
 
   const addTemplateListValue = (
-    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    field: 'bannedProviders' | 'allowedQuantizations',
     draft: string,
     setDraft: (value: string) => void
   ) => {
@@ -227,7 +224,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
   };
 
   const removeTemplateListValue = (
-    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    field: 'bannedProviders' | 'allowedQuantizations',
     value: string
   ) => {
     const current = formData.instructionTemplate[field];
@@ -505,20 +502,7 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
               <div className="border-t pt-4">
                 <h4 className="font-medium text-gray-700 mb-3">Provider Settings</h4>
                 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <StringListEditor
-                    label="Allowed Providers"
-                    values={formData.instructionTemplate.allowedProviders}
-                    draft={allowedProvidersDraft}
-                    onDraftChange={setAllowedProvidersDraft}
-                    onAdd={() => addTemplateListValue('allowedProviders', allowedProvidersDraft, setAllowedProvidersDraft)}
-                    onRemove={(value) => removeTemplateListValue('allowedProviders', value)}
-                    onCopy={() => copyListValues(formData.instructionTemplate.allowedProviders)}
-                    emptyText="No providers added"
-                    placeholder="DeepInfra or DeepInfra, Together"
-                    chipClassName="bg-blue-100 text-blue-800"
-                    chipRemoveClassName="text-blue-700 hover:text-blue-900"
-                  />
+                <div className="grid grid-cols-2 gap-4">
                   <StringListEditor
                     label="Banned Providers"
                     values={formData.instructionTemplate.bannedProviders}
@@ -532,9 +516,6 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     chipClassName="bg-red-100 text-red-800"
                     chipRemoveClassName="text-red-700 hover:text-red-900"
                   />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
                   <StringListEditor
                     label="Allowed Quantizations"
                     values={formData.instructionTemplate.allowedQuantizations}
@@ -548,6 +529,9 @@ export function ModelConfigDialog({ isOpen, onClose }: ModelConfigDialogProps) {
                     chipClassName="bg-purple-100 text-purple-800"
                     chipRemoveClassName="text-purple-700 hover:text-purple-900"
                   />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mt-4">
                   <Select
                     label="Sort Order"
                     value={formData.instructionTemplate.sortOrder || ''}

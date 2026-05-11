@@ -35,7 +35,6 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         const data = await fetchData<CompletionSettings>('completionModels');
         const normalizedModels = (data?.models || []).map((model) => ({
           ...model,
-          allowedProviders: model.allowedProviders || [],
           bannedProviders: model.bannedProviders || [],
           allowedQuantizations: model.allowedQuantizations || [],
           sortOrder: model.sortOrder || null,
@@ -58,7 +57,6 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         baseUrl: partial?.baseUrl || 'https://openrouter.ai/api/v1',
         token: partial?.token || '',
         modelId: partial?.modelId || '',
-        allowedProviders: partial?.allowedProviders || [],
         bannedProviders: partial?.bannedProviders || [],
         allowedQuantizations: partial?.allowedQuantizations || [],
         sortOrder: partial?.sortOrder || null,
@@ -106,7 +104,6 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         ...model,
         id: uuidv4(),
         name: `${model.name} (copy)`,
-        allowedProviders: [...model.allowedProviders],
         bannedProviders: [...model.bannedProviders],
         allowedQuantizations: [...model.allowedQuantizations],
         totalCost: 0,

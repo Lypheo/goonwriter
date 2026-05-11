@@ -4,7 +4,8 @@ import { replacePlaceholdersWithModelTokens, streamCompletion, streamChatComplet
 import { storySectionsToChatMessages, storySectionsToGenerationPrompt } from '../../services/storySections';
 import { resolveSectionsForGeneration } from '../../services/promptEngineering';
 import { createId } from '../../services/id';
-import { fetchOpenRouterModelPricing } from '../../services/apiService';
+import { fetchOpenRouterModelInfo } from '../../services/apiService';
+import type { OpenRouterProviderInfo } from '../../services/apiService';
 import { Button, Modal, Slider } from '../ui/common';
 import { ModelConfigDialog } from './ModelConfigDialog';
 import { CompletionModelConfigDialog } from './CompletionModelConfigDialog';
@@ -47,6 +48,7 @@ export function RightSidebar() {
     getSelectedModel,
     samplingParams,
     setSamplingParams,
+    updateModel,
   } = useModelStore();
   
   const { isGenerating, startGeneration, stopGeneration, setResponseMetadata } = useGenerationStore();
@@ -60,12 +62,17 @@ export function RightSidebar() {
   const [exportStatus, setExportStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [modelDropdownMaxHeight, setModelDropdownMaxHeight] = useState(384);
+  const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
+  const [providerDropdownMaxHeight, setProviderDropdownMaxHeight] = useState(320);
   const [disableThinking, setDisableThinking] = useState(false);
   const [useChatCompletion, setUseChatCompletion] = useState(false);
   const [openRouterPricingByModelId, setOpenRouterPricingByModelId] = useState<Record<string, { prompt: number | null; completion: number | null }>>({});
+  const [openRouterProvidersByModelId, setOpenRouterProvidersByModelId] = useState<Record<string, OpenRouterProviderInfo[]>>({});
   const [openRouterPricingState, setOpenRouterPricingState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const modelDropdownRef = useRef<HTMLDivElement | null>(null);
   const modelDropdownButtonRef = useRef<HTMLButtonElement | null>(null);
+  const providerDropdownRef = useRef<HTMLDivElement | null>(null);
+  const providerDropdownButtonRef = useRef<HTMLButtonElement | null>(null);
   
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
@@ -79,6 +86,7 @@ export function RightSidebar() {
   const selectedModelRaw = getSelectedModel();
   const selectedModel = selectedModelRaw && selectedModelRaw.enabled !== false ? selectedModelRaw : null;
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
+  const selectedProviderKey = selectedModel?.selectedProvider?.trim() || 'auto';
   const effectiveUseChatCompletion = useChatCompletion || !!selectedModel?.chatOnly;
 
   const extractNumericPrice = (value: unknown): number | null => {
@@ -94,7 +102,7 @@ export function RightSidebar() {
 
   const formatPricePerMillion = (pricePerToken: number): string => {
     const perMillion = pricePerToken * 1_000_000;
-    const fixed = perMillion.toFixed(perMillion >= 1 ? 4 : 6);
+    const fixed = perMillion.toFixed(2);
     let normalized = fixed.replace(/\.?0+$/, '');
 
     if (!normalized.includes('.')) {
@@ -103,24 +111,35 @@ export function RightSidebar() {
       normalized += '0';
     }
 
-    return `$${normalized}/M`;
+    return `$${normalized}`;
   };
 
   const isOpenRouterModel = !!selectedModel?.baseUrl && selectedModel.baseUrl.toLowerCase().includes('openrouter.ai');
   const selectedModelPricing = selectedModel ? openRouterPricingByModelId[selectedModel.id] : undefined;
+  const selectedModelProviders = selectedModel ? openRouterProvidersByModelId[selectedModel.id] || [] : [];
+  const bannedProviders = selectedModel?.instructionTemplate.bannedProviders || [];
+  const bannedProviderSet = useMemo(
+    () => new Set(bannedProviders.map((provider) => provider.trim().toLowerCase())),
+    [bannedProviders]
+  );
 
   useEffect(() => {
-    if (!isModelDropdownOpen) return;
+    if (!isModelDropdownOpen && !isProviderDropdownOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!modelDropdownRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(target)) {
         setIsModelDropdownOpen(false);
+      }
+      if (providerDropdownRef.current && !providerDropdownRef.current.contains(target)) {
+        setIsProviderDropdownOpen(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsModelDropdownOpen(false);
+        setIsProviderDropdownOpen(false);
       }
     };
 
@@ -130,7 +149,7 @@ export function RightSidebar() {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [isModelDropdownOpen]);
+  }, [isModelDropdownOpen, isProviderDropdownOpen]);
 
   useEffect(() => {
     if (!isModelDropdownOpen) return;
@@ -157,6 +176,30 @@ export function RightSidebar() {
   }, [isModelDropdownOpen]);
 
   useEffect(() => {
+    if (!isProviderDropdownOpen) return;
+
+    const updateMaxHeight = () => {
+      const triggerRect = providerDropdownButtonRef.current?.getBoundingClientRect();
+      if (!triggerRect) return;
+
+      const viewportBottomPadding = 8;
+      const dropdownTopGap = 4;
+      const availableHeight = Math.floor(window.innerHeight - triggerRect.bottom - dropdownTopGap - viewportBottomPadding);
+
+      setProviderDropdownMaxHeight(Math.max(120, availableHeight));
+    };
+
+    updateMaxHeight();
+    window.addEventListener('resize', updateMaxHeight);
+    window.addEventListener('scroll', updateMaxHeight, true);
+
+    return () => {
+      window.removeEventListener('resize', updateMaxHeight);
+      window.removeEventListener('scroll', updateMaxHeight, true);
+    };
+  }, [isProviderDropdownOpen]);
+
+  useEffect(() => {
     let active = true;
 
     const loadPricing = async () => {
@@ -172,14 +215,14 @@ export function RightSidebar() {
 
       setOpenRouterPricingState('loading');
 
-      const pricingEntries = await Promise.all(
+      const infoEntries = await Promise.all(
         openRouterModels.map(async (model) => {
-          const pricing = await fetchOpenRouterModelPricing(model.token, model.modelId);
-          if (!pricing) return null;
+          const info = await fetchOpenRouterModelInfo(model.token, model.modelId);
+          if (!info) return null;
           return {
             modelId: model.id,
-            prompt: extractNumericPrice(pricing.prompt),
-            completion: extractNumericPrice(pricing.completion),
+            pricing: info.pricing,
+            providers: info.providers,
           };
         })
       );
@@ -187,16 +230,21 @@ export function RightSidebar() {
       if (!active) return;
 
       const nextPricingByModelId: Record<string, { prompt: number | null; completion: number | null }> = {};
-      for (const entry of pricingEntries) {
+      const nextProvidersByModelId: Record<string, OpenRouterProviderInfo[]> = {};
+      for (const entry of infoEntries) {
         if (!entry) continue;
-        if (entry.prompt === null && entry.completion === null) continue;
-        nextPricingByModelId[entry.modelId] = {
-          prompt: entry.prompt,
-          completion: entry.completion,
-        };
+        const prompt = extractNumericPrice(entry.pricing?.prompt);
+        const completion = extractNumericPrice(entry.pricing?.completion);
+        if (prompt !== null || completion !== null) {
+          nextPricingByModelId[entry.modelId] = { prompt, completion };
+        }
+        if (entry.providers) {
+          nextProvidersByModelId[entry.modelId] = entry.providers;
+        }
       }
 
       setOpenRouterPricingByModelId(nextPricingByModelId);
+      setOpenRouterProvidersByModelId(nextProvidersByModelId);
       setOpenRouterPricingState(Object.keys(nextPricingByModelId).length > 0 ? 'ready' : 'error');
     };
 
@@ -514,6 +562,16 @@ export function RightSidebar() {
   };
 
   const exportStoryText = getExportStoryText();
+  useEffect(() => {
+    if (!selectedModel) {
+      setUseChatCompletion(false);
+      return;
+    }
+
+    const storedPreference = selectedModel.chatCompletionByProvider?.[selectedProviderKey] ?? false;
+    setUseChatCompletion(storedPreference);
+  }, [selectedModel, selectedProviderKey]);
+
   const sortedModels = [...enabledModels].sort((left, right) => {
     const leftPromptPrice = openRouterPricingByModelId[left.id]?.prompt;
     const rightPromptPrice = openRouterPricingByModelId[right.id]?.prompt;
@@ -541,6 +599,83 @@ export function RightSidebar() {
   };
 
   const selectedModelPricingLabel = selectedModel ? getModelPricingLabel(selectedModel.id) : null;
+
+  const getProviderName = (provider: OpenRouterProviderInfo): string =>
+    provider.provider_name || 'Unknown';
+
+  const normalizeProviderName = (value: string): string => value.trim().toLowerCase();
+
+  const getProviderQuantization = (provider: OpenRouterProviderInfo): string | null =>
+    provider.quantization || null;
+
+  const getProviderPricing = (provider: OpenRouterProviderInfo): { prompt: number | null; completion: number | null } => ({
+    prompt: extractNumericPrice(provider.pricing?.prompt),
+    completion: extractNumericPrice(provider.pricing?.completion),
+  });
+
+  const getProviderPriceWeight = (provider: OpenRouterProviderInfo): number => {
+    const pricing = getProviderPricing(provider);
+    if (pricing.prompt === null || pricing.completion === null) return Number.POSITIVE_INFINITY;
+    return pricing.completion * 4 + pricing.prompt;
+  };
+
+  const formatProviderPricing = (provider: OpenRouterProviderInfo): string => {
+    const pricing = getProviderPricing(provider);
+    const promptLabel = pricing.prompt !== null ? formatPricePerMillion(pricing.prompt) : 'N/A';
+    const completionLabel = pricing.completion !== null ? formatPricePerMillion(pricing.completion) : 'N/A';
+    return `${promptLabel}/${completionLabel}`;
+  };
+
+  const availableProviders = useMemo(() => {
+    if (!selectedModel || !isOpenRouterModel) return [] as OpenRouterProviderInfo[];
+    return selectedModelProviders
+      .filter((provider) => !bannedProviderSet.has(normalizeProviderName(getProviderName(provider))))
+      .sort((left, right) => {
+        const leftWeight = getProviderPriceWeight(left);
+        const rightWeight = getProviderPriceWeight(right);
+        if (leftWeight !== rightWeight) return leftWeight - rightWeight;
+        return getProviderName(left).localeCompare(getProviderName(right), undefined, { sensitivity: 'base' });
+      });
+  }, [selectedModel, selectedModelProviders, isOpenRouterModel, bannedProviderSet]);
+
+  const selectedProviderLabel = !isOpenRouterModel
+    ? 'Auto (provider selection unavailable)'
+    : selectedProviderKey === 'auto'
+      ? 'Auto (OpenRouter decides)'
+      : selectedProviderKey;
+
+  const normalizedSelectedProviderKey = selectedProviderKey === 'auto'
+    ? 'auto'
+    : normalizeProviderName(selectedProviderKey);
+  const selectedProviderInfo = selectedProviderKey !== 'auto'
+    ? availableProviders.find((provider) => normalizeProviderName(getProviderName(provider)) === normalizedSelectedProviderKey)
+    : undefined;
+  const selectedProviderPricingLabel = selectedProviderInfo ? formatProviderPricing(selectedProviderInfo) : null;
+  const selectedProviderQuantization = selectedProviderInfo ? getProviderQuantization(selectedProviderInfo) : null;
+  const selectedProviderLatencyLabel = typeof selectedProviderInfo?.latency_last_30m?.p50 === 'number' ? `${selectedProviderInfo.latency_last_30m.p50.toFixed(0)}ms` : null;
+  const selectedProviderThroughputLabel = typeof selectedProviderInfo?.throughput_last_30m?.p50 === 'number' ? `${selectedProviderInfo.throughput_last_30m.p50.toFixed(1)} t/s` : null;
+
+  const selectedProviderSubtitle = [
+    selectedProviderPricingLabel,
+    selectedProviderLatencyLabel,
+    selectedProviderThroughputLabel,
+    selectedProviderQuantization && selectedProviderQuantization !== '-' ? selectedProviderQuantization : null,
+  ].filter(Boolean).join(' • ');
+
+  const hasLoadedProviderData = Boolean(selectedModel && Object.prototype.hasOwnProperty.call(openRouterProvidersByModelId, selectedModel.id));
+
+  useEffect(() => {
+    if (!selectedModel || !selectedModel.selectedProvider) return;
+    if (!isOpenRouterModel) return;
+    if (!hasLoadedProviderData) return;
+
+    const isStillAvailable = availableProviders.some(
+      (provider) => normalizeProviderName(getProviderName(provider)) === normalizeProviderName(selectedModel.selectedProvider)
+    );
+    if (!isStillAvailable) {
+      updateModel(selectedModel.id, { selectedProvider: null });
+    }
+  }, [availableProviders, hasLoadedProviderData, isOpenRouterModel, selectedModel, updateModel]);
   
   return (
     <div className="w-72 h-full bg-gray-50 border-l border-gray-200 flex flex-col">
@@ -632,6 +767,125 @@ export function RightSidebar() {
             <SettingsIcon />
           </Button>
         </div>
+
+        {selectedModel && (
+          <div className="mt-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+            <div className="relative" ref={providerDropdownRef}>
+              <button
+                type="button"
+                ref={providerDropdownButtonRef}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm bg-white hover:bg-gray-50 transition-colors text-left disabled:bg-gray-100 disabled:text-gray-500"
+                onClick={() => {
+                  if (!isOpenRouterModel) return;
+                  setIsProviderDropdownOpen((open) => !open);
+                }}
+                disabled={!isOpenRouterModel}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 w-full">
+                    <p className="truncate text-gray-900">{selectedProviderLabel}</p>
+                    {selectedProviderSubtitle && (
+                      <p className="truncate text-[11px] text-gray-500">{selectedProviderSubtitle}</p>
+                    )}
+                  </div>
+                  <svg
+                    className={`w-4 h-4 text-gray-500 transition-transform ${isProviderDropdownOpen ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </button>
+
+              {isProviderDropdownOpen && isOpenRouterModel && (
+                <div
+                  className="absolute z-20 mt-1 w-full overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg"
+                  style={{ maxHeight: `${providerDropdownMaxHeight}px` }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedModel) return;
+                      updateModel(selectedModel.id, { selectedProvider: null });
+                      setIsProviderDropdownOpen(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left hover:bg-gray-50 flex flex-col gap-0.5 border-b border-gray-100 ${selectedProviderKey === 'auto' ? 'bg-blue-50/50' : ''}`}
+                  >
+                    <div className={`text-sm font-medium ${selectedProviderKey === 'auto' ? 'text-blue-700' : 'text-gray-700'}`}>Auto (OpenRouter decides)</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">Uses OpenRouter ranking with banned providers and quantization filters.</div>
+                  </button>
+
+                  <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold border-b border-gray-100 bg-gray-50/50">
+                    Available Providers
+                  </div>
+
+                  {availableProviders.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-gray-500">No providers available for this model.</div>
+                  )}
+
+                  {availableProviders.map((provider) => {
+                    const providerName = getProviderName(provider);
+                    const quantization = getProviderQuantization(provider) || '-';
+                    const latency = provider.latency_last_30m?.p50;
+                    const throughput = provider.throughput_last_30m?.p50;
+                    const latencyLabel = typeof latency === 'number' ? `${latency.toFixed(0)}ms` : '-';
+                    const throughputLabel = typeof throughput === 'number' ? `${throughput.toFixed(1)} t/s` : '-';
+                    const isSelected = normalizedSelectedProviderKey !== 'auto'
+                      && normalizeProviderName(providerName) === normalizedSelectedProviderKey;
+                    return (
+                      <button
+                        key={providerName}
+                        type="button"
+                        onClick={() => {
+                          if (!selectedModel) return;
+                          updateModel(selectedModel.id, { selectedProvider: providerName });
+                          setIsProviderDropdownOpen(false);
+                        }}
+                        className={`w-full px-3 py-2 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0 flex flex-col gap-1.5 ${isSelected ? 'bg-blue-50/50' : ''}`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-700'}`}>{providerName}</div>
+                          {quantization !== '-' && (
+                            <span className="shrink-0 ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-600 font-mono tracking-tight uppercase border border-gray-200">{quantization}</span>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center justify-between w-full text-[11px] text-gray-500">
+                          {/* Price */}
+                          <div className="flex items-center gap-1 font-mono text-[11px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 shrink-0" title="Price (in/out) per 1M tokens">
+                            <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            {formatProviderPricing(provider)}
+                          </div>
+
+                          {/* Speed stats wrapper */}
+                          <div className="flex items-center gap-3 shrink-0 ml-2">
+                            {/* Throughput */}
+                            <div className="flex items-center gap-1" title="Throughput (p50)">
+                              <svg className="w-3 h-3 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                              <span className={typeof throughput === 'number' ? 'text-gray-700 font-medium' : ''}>{throughputLabel}</span>
+                            </div>
+
+                            {/* Latency */}
+                            <div className="flex items-center gap-1" title="Latency (p50)">
+                              <svg className="w-3 h-3 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              <span className={typeof latency === 'number' ? 'text-gray-700 font-medium' : ''}>{latencyLabel}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {!isOpenRouterModel && (
+              <p className="mt-1 text-xs text-gray-500">Provider selection is available for OpenRouter models.</p>
+            )}
+          </div>
+        )}
         
         {enabledModels.length === 0 && (
           <p className="mt-2 text-xs text-gray-500">
@@ -676,7 +930,18 @@ export function RightSidebar() {
           <input
             type="checkbox"
             checked={effectiveUseChatCompletion}
-            onChange={(e) => setUseChatCompletion(e.target.checked)}
+            onChange={(e) => {
+              const nextValue = e.target.checked;
+              setUseChatCompletion(nextValue);
+              if (selectedModel) {
+                updateModel(selectedModel.id, {
+                  chatCompletionByProvider: {
+                    ...(selectedModel.chatCompletionByProvider || {}),
+                    [selectedProviderKey]: nextValue,
+                  },
+                });
+              }
+            }}
             disabled={!!selectedModel?.chatOnly}
             className="rounded border-gray-300"
           />
@@ -799,7 +1064,7 @@ export function RightSidebar() {
                       ? 'bg-blue-50 text-blue-800 hover:bg-blue-100'
                       : 'text-gray-500 hover:bg-gray-100'
                   }`}
-                  title={`Click to ${m.enabled ? 'disable' : 'enable'} — ${m.modelId || 'no model ID'}`}
+                  title={`Click to ${m.enabled ? 'disable' : 'enable'} - ${m.modelId || 'no model ID'}`}
                 >
                   <span
                     className={`w-2 h-2 rounded-full flex-shrink-0 ${

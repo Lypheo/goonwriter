@@ -108,10 +108,11 @@ function buildRequestBody(
   // Add provider config if any relevant fields are set
   const template = model.instructionTemplate;
   const provider: ProviderConfig = {};
-  
-  if (template.allowedProviders.length > 0) {
-    provider.only = template.allowedProviders;
+
+  if (model.selectedProvider) {
+    provider.only = [model.selectedProvider];
   }
+  
   if (template.bannedProviders.length > 0) {
     provider.ignore = template.bannedProviders;
   }
@@ -178,10 +179,11 @@ function buildChatRequestBody(
   // Add provider config if any relevant fields are set
   const template = model.instructionTemplate;
   const provider: ProviderConfig = {};
-  
-  if (template.allowedProviders.length > 0) {
-    provider.only = template.allowedProviders;
+
+  if (model.selectedProvider) {
+    provider.only = [model.selectedProvider];
   }
+  
   if (template.bannedProviders.length > 0) {
     provider.ignore = template.bannedProviders;
   }
@@ -247,9 +249,6 @@ const SENTENCE_MAX_TOKENS = 80;
 function buildCompletionModelProviderConfig(model: CompletionModelConfig): ProviderConfig | undefined {
   const provider: ProviderConfig = {};
 
-  if (model.allowedProviders.length > 0) {
-    provider.only = model.allowedProviders;
-  }
   if (model.bannedProviders.length > 0) {
     provider.ignore = model.bannedProviders;
   }

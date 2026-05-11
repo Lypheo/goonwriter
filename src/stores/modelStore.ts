@@ -14,7 +14,6 @@ const defaultInstructionTemplate: InstructionTemplate = {
   assistantTagSuffix: '',
   thinkTagPrefix: '<think>',
   thinkTagSuffix: '</think>',
-  allowedProviders: [],
   bannedProviders: [],
   allowedQuantizations: [],
   sortOrder: null,
@@ -80,6 +79,8 @@ export const useModelStore = create<ModelState>()(
             enabled: model.enabled ?? true,
             chatOnly: model.chatOnly ?? false,
             disableThinkingPrefill: model.disableThinkingPrefill ?? '</think>',
+            selectedProvider: model.selectedProvider ?? null,
+            chatCompletionByProvider: model.chatCompletionByProvider || {},
           }));
           
           set({
@@ -99,6 +100,8 @@ export const useModelStore = create<ModelState>()(
         const model: ModelConfig = {
           ...config,
           id: uuidv4(),
+          selectedProvider: null,
+          chatCompletionByProvider: {},
           createdAt: now,
           updatedAt: now,
         };

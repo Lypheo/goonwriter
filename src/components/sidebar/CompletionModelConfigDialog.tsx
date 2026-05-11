@@ -48,7 +48,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const lastLoadedIdRef = useRef<string | null>(null);
-  const [allowedProvidersDraft, setAllowedProvidersDraft] = useState('');
   const [bannedProvidersDraft, setBannedProvidersDraft] = useState('');
   const [allowedQuantizationsDraft, setAllowedQuantizationsDraft] = useState('');
 
@@ -57,7 +56,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
     baseUrl: '',
     token: '',
     modelId: '',
-    allowedProviders: [],
     bannedProviders: [],
     allowedQuantizations: [],
     sortOrder: null,
@@ -69,7 +67,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
   });
 
   const addListValue = (
-    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    field: 'bannedProviders' | 'allowedQuantizations',
     draft: string,
     setDraft: (value: string) => void
   ) => {
@@ -85,7 +83,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
   };
 
   const removeListValue = (
-    field: 'allowedProviders' | 'bannedProviders' | 'allowedQuantizations',
+    field: 'bannedProviders' | 'allowedQuantizations',
     value: string
   ) => {
     setFormData((prev) => ({
@@ -112,7 +110,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
         baseUrl: '',
         token: '',
         modelId: '',
-        allowedProviders: [],
         bannedProviders: [],
         allowedQuantizations: [],
         sortOrder: null,
@@ -122,7 +119,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
         prompt: '',
         contextLength: 1000,
       });
-      setAllowedProvidersDraft('');
       setBannedProvidersDraft('');
       setAllowedQuantizationsDraft('');
       return;
@@ -139,7 +135,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
       baseUrl: model.baseUrl,
       token: model.token,
       modelId: model.modelId,
-      allowedProviders: model.allowedProviders,
       bannedProviders: model.bannedProviders,
       allowedQuantizations: model.allowedQuantizations,
       sortOrder: model.sortOrder,
@@ -149,7 +144,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
       prompt: model.prompt,
       contextLength: model.contextLength,
     });
-    setAllowedProvidersDraft('');
     setBannedProvidersDraft('');
     setAllowedQuantizationsDraft('');
   }, [selectedId, models]);
@@ -363,20 +357,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
               <div className="border-t pt-4">
                 <h4 className="text-sm font-medium text-gray-700 mb-3">Provider Settings</h4>
 
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <StringListEditor
-                    label="Allowed Providers"
-                    values={formData.allowedProviders}
-                    draft={allowedProvidersDraft}
-                    onDraftChange={setAllowedProvidersDraft}
-                    onAdd={() => addListValue('allowedProviders', allowedProvidersDraft, setAllowedProvidersDraft)}
-                    onRemove={(value) => removeListValue('allowedProviders', value)}
-                    onCopy={() => copyListValues(formData.allowedProviders)}
-                    emptyText="No providers added"
-                    placeholder="DeepInfra or DeepInfra, Together"
-                    chipClassName="bg-blue-100 text-blue-800"
-                    chipRemoveClassName="text-blue-700 hover:text-blue-900"
-                  />
+                <div className="grid grid-cols-2 gap-4">
                   <StringListEditor
                     label="Banned Providers"
                     values={formData.bannedProviders}
@@ -390,9 +371,6 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
                     chipClassName="bg-red-100 text-red-800"
                     chipRemoveClassName="text-red-700 hover:text-red-900"
                   />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
                   <StringListEditor
                     label="Allowed Quantizations"
                     values={formData.allowedQuantizations}
@@ -406,6 +384,8 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
                     chipClassName="bg-purple-100 text-purple-800"
                     chipRemoveClassName="text-purple-700 hover:text-purple-900"
                   />
+                </div>
+                <div className="grid grid-cols-2 gap-4 mt-4">
                   <Select
                     label="Sort Order"
                     value={formData.sortOrder || ''}
