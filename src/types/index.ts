@@ -239,8 +239,10 @@ export interface ResponseMetadata {
   finishReason: string | null;
   nativeFinishReason: string | null;
   usage: UsageInfo | null;
+  usageIsEstimated?: boolean;
   error: string | null;
-  wordsPerSecond: number;
+  tokensPerSecond: number;
+  latencyMs: number | null;
   generationStartTime: number;
   generationEndTime: number | null;
 }

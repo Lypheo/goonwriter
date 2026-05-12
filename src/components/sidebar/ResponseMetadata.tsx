@@ -123,11 +123,19 @@ export function ResponseMetadata() {
           </div>
         )}
         
-        {/* WPS */}
-        {responseMetadata.wordsPerSecond > 0 && (
+        {/* Latency */}
+        {responseMetadata.latencyMs !== null && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Latency:</span>
+            <span className="font-medium">{Math.round(responseMetadata.latencyMs)} ms</span>
+          </div>
+        )}
+
+        {/* Tokens per second */}
+        {responseMetadata.tokensPerSecond > 0 && (
           <div className="flex justify-between">
             <span className="text-gray-500">Speed:</span>
-            <span className="font-medium">{responseMetadata.wordsPerSecond.toFixed(1)} w/s</span>
+            <span className="font-medium">{responseMetadata.tokensPerSecond.toFixed(1)} tok/s</span>
           </div>
         )}
         
@@ -149,7 +157,12 @@ export function ResponseMetadata() {
             {responseMetadata.usage.cost !== undefined && responseMetadata.usage.cost !== null && (
               <div className="flex justify-between items-center">
                 <span className="text-gray-500">Cost:</span>
-                <span className="font-medium text-gray-700">{formatCostCents(responseMetadata.usage.cost)}</span>
+                <span className="font-medium text-gray-700">
+                  {formatCostCents(responseMetadata.usage.cost)}
+                  {responseMetadata.usageIsEstimated && (
+                    <span className="text-gray-400"> (est.)</span>
+                  )}
+                </span>
               </div>
             )}
           </>

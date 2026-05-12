@@ -51,7 +51,7 @@ export function RightSidebar() {
     updateModel,
   } = useModelStore();
   
-  const { isGenerating, startGeneration, stopGeneration, setResponseMetadata } = useGenerationStore();
+  const { isGenerating, startGeneration, stopGeneration, setResponseMetadata, responseMetadata } = useGenerationStore();
   const { stories, updateStory, applyWritingPlanFromStoryResponse } = useDataStore();
   const { selectedStoryId } = useAppStore();
   
@@ -73,6 +73,8 @@ export function RightSidebar() {
   const modelDropdownButtonRef = useRef<HTMLButtonElement | null>(null);
   const providerDropdownRef = useRef<HTMLDivElement | null>(null);
   const providerDropdownButtonRef = useRef<HTMLButtonElement | null>(null);
+  const latestPromptTokenEstimateRef = useRef(0);
+  const latestCompletionTokenEstimateRef = useRef(0);
   
   const completionModels = useCompletionModelStore((s) => s.models);
   const updateCompletionModel = useCompletionModelStore((s) => s.updateModel);
@@ -368,11 +370,18 @@ export function RightSidebar() {
     }
     
     const abortController = startGeneration();
-    let wordCount = 0;
+    let charCount = 0;
     const startTime = Date.now();
+    let firstChunkAt: number | null = null;
+    latestPromptTokenEstimateRef.current = 0;
+    latestCompletionTokenEstimateRef.current = 0;
     
     const callbacks = {
       onChunk: (data: { text: string; reasoning: string }) => {
+        if (firstChunkAt === null) {
+          firstChunkAt = Date.now();
+          setResponseMetadata({ latencyMs: firstChunkAt - startTime });
+        }
         // Split raw text into response vs reasoning, then merge in explicit reasoning field if provided.
         const parsed = splitStreamedContent(data.text, thinkState, thinkTagPrefix, thinkTagSuffix);
         generatedResponse += parsed.responsePart;
@@ -381,10 +390,12 @@ export function RightSidebar() {
           generatedThinking += data.reasoning;
         }
 
-        wordCount = `${generatedResponse} ${generatedThinking}`.split(/\s+/).filter((w) => w.length > 0).length;
+        charCount = `${generatedResponse} ${generatedThinking}`.length;
         
         const elapsedSeconds = (Date.now() - startTime) / 1000;
-        const wps = elapsedSeconds > 0 ? wordCount / elapsedSeconds : 0;
+        const estimatedTokens = charCount / 4.35;
+        latestCompletionTokenEstimateRef.current = estimatedTokens;
+        const tps = elapsedSeconds > 0 ? estimatedTokens / elapsedSeconds : 0;
         
         workingSections = workingSections.map((section, index) =>
           index === assistantIndex
@@ -400,7 +411,7 @@ export function RightSidebar() {
           sections: workingSections,
         });
         
-        setResponseMetadata({ wordsPerSecond: wps });
+        setResponseMetadata({ tokensPerSecond: tps });
       },
       onMetadata: (chunk: import('../../types').CompletionChunk) => {
         setResponseMetadata({
@@ -411,6 +422,7 @@ export function RightSidebar() {
           finishReason: chunk.choices?.[0]?.finish_reason || null,
           nativeFinishReason: chunk.choices?.[0]?.native_finish_reason || null,
           usage: chunk.usage || null,
+          usageIsEstimated: false,
         });
         
         // Accumulate cost and tokens when usage info is available
@@ -456,6 +468,8 @@ export function RightSidebar() {
     
     try {
       if (effectiveUseChatCompletion && chatMessages) {
+        const promptTextForEstimate = chatMessages.map((message) => message.content).join(' ');
+        latestPromptTokenEstimateRef.current = promptTextForEstimate.length / 4.35;
         await streamChatCompletion(
           selectedModel,
           chatMessages,
@@ -465,12 +479,14 @@ export function RightSidebar() {
           { disableThinking }
         );
       } else {
+        const generationPrompt = storySectionsToGenerationPrompt(generationSections, {
+          disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
+          disableThinking,
+        });
+        latestPromptTokenEstimateRef.current = generationPrompt.length / 4.35;
         await streamCompletion(
           selectedModel,
-          storySectionsToGenerationPrompt(generationSections, {
-            disableThinkingPrefill: selectedModel.disableThinkingPrefill || '</think>',
-            disableThinking,
-          }),
+          generationPrompt,
           samplingParams,
           callbacks,
           abortController.signal
@@ -485,6 +501,40 @@ export function RightSidebar() {
   }, [selectedModel, selectedStory, stories, isGenerating, samplingParams, disableThinking, effectiveUseChatCompletion, startGeneration, stopGeneration, setResponseMetadata, updateStory, applyWritingPlanFromStoryResponse]);
   
   // Ctrl+Enter hotkey for generate/stop
+  const handleStop = useCallback(() => {
+    if (isGenerating && selectedModel) {
+      const existingUsage = responseMetadata?.usage;
+      if (!existingUsage) {
+        const promptTokens = latestPromptTokenEstimateRef.current;
+        const completionTokens = latestCompletionTokenEstimateRef.current;
+        const totalTokens = promptTokens + completionTokens;
+        const normalizeKey = (value: string) => value.trim().toLowerCase();
+        const responseProvider = responseMetadata?.provider?.trim() || '';
+        const providerPricing = responseProvider
+          ? openRouterProvidersByModelId[selectedModel.id]?.find(
+              (provider) => normalizeKey(provider.provider_name || '') === normalizeKey(responseProvider)
+            )?.pricing
+          : undefined;
+        const pricing = providerPricing || openRouterPricingByModelId[selectedModel.id];
+        if (pricing && (typeof pricing.prompt === 'number' || typeof pricing.completion === 'number')) {
+          const promptRate = typeof pricing.prompt === 'number' ? pricing.prompt : 0;
+          const completionRate = typeof pricing.completion === 'number' ? pricing.completion : 0;
+          const estimatedCost = promptRate * promptTokens + completionRate * completionTokens;
+          setResponseMetadata({
+            usage: {
+              prompt_tokens: Math.round(promptTokens),
+              completion_tokens: Math.round(completionTokens),
+              total_tokens: Math.round(totalTokens),
+              cost: estimatedCost,
+            },
+            usageIsEstimated: true,
+          });
+        }
+      }
+    }
+    stopGeneration();
+  }, [isGenerating, openRouterPricingByModelId, responseMetadata?.usage, selectedModel, setResponseMetadata, stopGeneration]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'Enter') {
@@ -492,7 +542,7 @@ export function RightSidebar() {
         e.stopPropagation();
         e.stopImmediatePropagation?.();
         if (isGenerating) {
-          stopGeneration();
+          handleStop();
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               window.dispatchEvent(new CustomEvent('goonwriter:focus-last-section-end'));
@@ -506,11 +556,7 @@ export function RightSidebar() {
     
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [handleGenerate, isGenerating, stopGeneration]);
-  
-  const handleStop = () => {
-    stopGeneration();
-  };
+  }, [handleGenerate, handleStop, isGenerating]);
 
   const rawPromptPreview = selectedStory && selectedModel
     ? replacePlaceholdersWithModelTokens(
@@ -1001,15 +1047,9 @@ export function RightSidebar() {
           </div>
         </div>
 
-        {selectedStory && (
+        {selectedStory && exportStatus !== 'idle' && (
           <p className={`mt-2 text-xs text-right ${exportStatus === 'failed' ? 'text-red-600' : 'text-gray-500'}`}>
-            {exportStatus === 'copied'
-              ? 'Story copied to clipboard'
-              : exportStatus === 'failed'
-                ? 'Export failed'
-                : exportStoryText
-                  ? `${exportStoryText.length.toLocaleString()} characters`
-                  : 'No assistant responses to export'}
+            {exportStatus === 'copied' ? 'Story copied to clipboard' : 'Export failed'}
           </p>
         )}
         
