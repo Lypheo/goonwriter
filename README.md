@@ -2,7 +2,7 @@
 
 AI-Storywriting tool / glorified chat UI.
 
-Yet Another LLM Frontend that doesn't really do anything new. I only made it because vibe-coding my own bespoke app is way more fun than trying to figure out the optimal [SillyTavern](https://github.com/SillyTavern/SillyTavern) setup.
+Yet Another LLM Frontend that doesn't really do anything new. I only made it because vibe-coding my bespoke qwe is way more fun than trying to figure out the optimal [SillyTavern](https://github.com/SillyTavern/SillyTavern) setup.
 
 <img width="2247" height="1280" alt="image" src="https://github.com/user-attachments/assets/0add3414-4034-4f61-afd8-d6d65bb0d705" />
 
@@ -24,7 +24,7 @@ High-level story overview...
 
 [CHAPTERS]
 [CHAPTER 1: Title]
-Outline text...
+Outline text...wqe
 
 [CHAPTER 2: Title]
 Outline text...
