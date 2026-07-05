@@ -439,6 +439,7 @@ export const useDataStore = create<DataState>()(
           id: uuidv4(),
           name: `${story.name} (copy)`,
           sections: duplicatedSections,
+          originalStoryId: story.id,
           totalCost: 0, // Reset cost for duplicated story
           totalTokens: 0,
           createdAt: now,

@@ -256,7 +256,7 @@ const roleStyles: Record<StorySection['type'], string> = {
 
 export function StoryEditor() {
   const { stories, updateStory, updateWritingPlanFromVariableEdit } = useDataStore();
-  const { selectedStoryId, userCommandTemplate, setUserCommandTemplate } = useAppStore();
+  const { selectedStoryId, setSelectedStory, userCommandTemplate, setUserCommandTemplate } = useAppStore();
   const { isGenerating } = useGenerationStore();
 
   const selectedStory = stories.find((s) => s.id === selectedStoryId);
@@ -1175,6 +1175,23 @@ export function StoryEditor() {
       <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-gray-800">{selectedStory.name}</h1>
+          {(() => {
+            if (!selectedStory.originalStoryId) return null;
+            const originStory = stories.find((s) => s.id === selectedStory.originalStoryId);
+            if (!originStory) return null;
+            return (
+              <button
+                onClick={() => setSelectedStory(originStory.id)}
+                className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                title={`Cloned from: ${originStory.name}`}
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span>cloned from {originStory.name}</span>
+              </button>
+            );
+          })()}
           <div className="flex items-center gap-1 ml-2">
             <button
               onClick={() => {

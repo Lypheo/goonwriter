@@ -21,6 +21,7 @@ export interface Story {
   name: string;
   sections: StorySection[];
   parentStoryId?: string | null;
+  originalStoryId?: string | null; // ID of the story this was cloned/duplicated from
   chapterNumber?: number | null;
   chapterTitle?: string;
   writingPlan?: WritingPlan | null;
