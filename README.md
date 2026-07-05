@@ -33,6 +33,23 @@ Outline text...
 
 When detected in a parent story response, chapter child stories are created/updated automatically.
 
+The newest valid plan in the parent story is treated as canonical. Each chapter becomes (or updates) a child story named like `Parent Title - Chapter N`, and the chapter title/number metadata stays in sync with the plan. Child stories inherit:
+
+- The parent story's system prompt content.
+- The parent story's child prompt/response templates (as their initial user/assistant sections).
+
+Updating the plan in a parent story re-syncs all chapter children.
+
+## Story Blueprint
+
+The Story Blueprint sidebar is where you set the parent story's template and placeholder defaults that feed chapter children:
+
+- **Child prompt template**: The user section used for every generated chapter story.
+- **Child response template**: The assistant section scaffold for each chapter story.
+- **Placeholders**: Custom `{{placeholder_name}}` values that can be reused in prompts.
+
+Open it from the left sidebar using the "Story Blueprint" toggle.
+
 ## Prompt Tokens
 
 - Placeholders: `{{placeholder_name}}`

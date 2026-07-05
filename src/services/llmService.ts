@@ -245,6 +245,7 @@ export interface SentenceCompletionCallbacks {
 }
 
 const SENTENCE_MAX_TOKENS = 80;
+const SENTENCE_TEMP = 1;
 
 function buildCompletionModelProviderConfig(model: CompletionModelConfig): ProviderConfig | undefined {
   const provider: ProviderConfig = {};
@@ -363,7 +364,8 @@ export async function streamSentenceCompletion(
           stream: true,
           stream_options: { include_usage: true },
           max_tokens: SENTENCE_MAX_TOKENS,
-          temperature: 0.7,
+          temperature: SENTENCE_TEMP,
+          reasoning: { effort: "none" },
           ...(provider ? { provider } : {}),
         }),
         signal: abortSignal,
@@ -398,7 +400,8 @@ export async function streamSentenceCompletion(
           stream: true,
           stream_options: { include_usage: true },
           max_tokens: SENTENCE_MAX_TOKENS,
-          temperature: 0.7,
+          temperature: SENTENCE_TEMP,
+          reasoning: { effort: "minimal" },
           ...(provider ? { provider } : {}),
         }),
         signal: abortSignal,
