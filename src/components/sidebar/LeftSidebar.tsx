@@ -56,6 +56,23 @@ const ChevronIcon = ({ isOpen }: { isOpen: boolean }) => (
   </svg>
 );
 
+function formatRelativeDate(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  const date = new Date(timestamp);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function LeftSidebar() {
   const {
     groups,
@@ -334,6 +351,7 @@ export function LeftSidebar() {
                             <ChevronIcon isOpen={isCollectionExpanded} />
                             <CollectionIcon />
                             <span className="flex-1 text-sm truncate">{collection.name}</span>
+                            <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{formatRelativeDate(collection.updatedAt)}</span>
                             <div className="hidden group-hover:flex items-center gap-0.5">
                               <button
                                 className="p-1 hover:bg-gray-300 rounded"
@@ -393,6 +411,7 @@ export function LeftSidebar() {
                                       }}                                >
                                       <DocumentIcon />
                                       <span className="flex-1 text-sm truncate">{story.name}</span>
+                                      <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{formatRelativeDate(story.updatedAt)}</span>
                                       {childStories.length > 0 && (
                                         <span className="text-[10px] text-gray-500 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200">
                                           {childStories.length} ch
@@ -445,6 +464,7 @@ export function LeftSidebar() {
                                             <span className="text-[10px] text-gray-500">#{child.chapterNumber || '?'}</span>
                                             <DocumentIcon />
                                             <span className="flex-1 text-sm truncate">{child.chapterTitle || child.name}</span>
+                                            <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{formatRelativeDate(child.updatedAt)}</span>
                                           </button>
                                         ))}
                                       </div>
