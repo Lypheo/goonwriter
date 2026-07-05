@@ -21,6 +21,7 @@ interface CompletionModelState {
   deleteModel: (id: string) => void;
   duplicateModel: (id: string) => CompletionModelConfig | null;
   getEnabledModels: () => CompletionModelConfig[];
+  getUtilityModel: () => CompletionModelConfig | null;
   accumulateCost: (id: string, cost: number, tokens: number) => void;
 }
 
@@ -38,6 +39,7 @@ export const useCompletionModelStore = create<CompletionModelState>()(
           bannedProviders: model.bannedProviders || [],
           allowedQuantizations: model.allowedQuantizations || [],
           sortOrder: model.sortOrder || null,
+          isUtilityModel: model.isUtilityModel ?? false,
         }));
         set({
           models: normalizedModels,
@@ -61,6 +63,7 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         allowedQuantizations: partial?.allowedQuantizations || [],
         sortOrder: partial?.sortOrder || null,
         enabled: partial?.enabled ?? false,
+        isUtilityModel: partial?.isUtilityModel ?? false,
         mode: partial?.mode || 'instruction',
         systemMessage: partial?.systemMessage || 'You are a writing assistant. Complete the sentence or predict the next sentence naturally and concisely. Output ONLY the completion text with no commentary.',
         prompt: partial?.prompt || 'Continue the following text naturally. Output only the completion:\n\n',
@@ -80,9 +83,15 @@ export const useCompletionModelStore = create<CompletionModelState>()(
 
     updateModel: (id, updates) => {
       set((state) => {
-        const newModels = state.models.map((m) =>
+        let newModels = state.models.map((m) =>
           m.id === id ? { ...m, ...updates, updatedAt: Date.now() } : m
         );
+        // Enforce only one utility model at a time
+        if (updates.isUtilityModel === true) {
+          newModels = newModels.map((m) =>
+            m.id === id ? m : { ...m, isUtilityModel: false, updatedAt: Date.now() }
+          );
+        }
         debouncedSave({ models: newModels });
         return { models: newModels };
       });
@@ -106,6 +115,7 @@ export const useCompletionModelStore = create<CompletionModelState>()(
         name: `${model.name} (copy)`,
         bannedProviders: [...model.bannedProviders],
         allowedQuantizations: [...model.allowedQuantizations],
+        isUtilityModel: false,
         totalCost: 0,
         totalTokens: 0,
         createdAt: now,
@@ -121,6 +131,10 @@ export const useCompletionModelStore = create<CompletionModelState>()(
 
     getEnabledModels: () => {
       return get().models.filter((m) => m.enabled && m.modelId.trim() && m.baseUrl.trim());
+    },
+
+    getUtilityModel: () => {
+      return get().models.find((m) => m.isUtilityModel) || null;
     },
 
     accumulateCost: (id, cost, tokens) => {

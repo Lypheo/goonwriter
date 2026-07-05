@@ -60,6 +60,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
     allowedQuantizations: [],
     sortOrder: null,
     enabled: false,
+    isUtilityModel: false,
     mode: 'instruction',
     systemMessage: '',
     prompt: '',
@@ -114,6 +115,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
         allowedQuantizations: [],
         sortOrder: null,
         enabled: false,
+        isUtilityModel: false,
         mode: 'instruction',
         systemMessage: '',
         prompt: '',
@@ -139,6 +141,7 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
       allowedQuantizations: model.allowedQuantizations,
       sortOrder: model.sortOrder,
       enabled: model.enabled,
+      isUtilityModel: model.isUtilityModel,
       mode: model.mode,
       systemMessage: model.systemMessage,
       prompt: model.prompt,
@@ -320,6 +323,18 @@ export function CompletionModelConfigDialog({ isOpen, onClose }: CompletionModel
                   className="rounded border-gray-300"
                 />
                 <span>Enable for sentence completion</span>
+              </label>
+
+              {/* Utility model toggle */}
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.isUtilityModel}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, isUtilityModel: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <span>Enable as utility model</span>
+                <span className="text-xs text-gray-400 font-normal">(only one at a time)</span>
               </label>
 
               {/* Basic Info */}

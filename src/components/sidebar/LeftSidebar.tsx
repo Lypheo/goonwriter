@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useDataStore, useAppStore } from '../../stores';
+import { useDataStore, useAppStore, useCompletionModelStore } from '../../stores';
 import { Button, Input, Modal, ConfirmDialog } from '../ui/common';
+import { suggestTitle } from '../../services/llmService';
 
 // Icons
 const FolderIcon = () => (
@@ -56,6 +57,17 @@ const ChevronIcon = ({ isOpen }: { isOpen: boolean }) => (
   </svg>
 );
 
+const SparklesIcon = ({ spinning }: { spinning?: boolean } = {}) => (
+  <svg
+    className={`w-4 h-4 ${spinning ? 'animate-spin text-blue-500' : 'text-purple-500'}`}
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+  </svg>
+);
+
 function formatRelativeDate(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp;
@@ -97,7 +109,11 @@ export function LeftSidebar() {
     setSelectedGroup,
     setSelectedCollection,
     setSelectedStory,
+    titleSuggestionPrompt,
+    setTitleSuggestionPrompt,
   } = useAppStore();
+  
+  const { models: completionModels } = useCompletionModelStore();
   
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
@@ -126,6 +142,12 @@ export function LeftSidebar() {
   
   // Delete confirm states
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'group' | 'collection' | 'story'; id: string; name: string } | null>(null);
+  
+  // AI title suggestion state
+  const [isSuggestingTitle, setIsSuggestingTitle] = useState(false);
+  const [titleSuggestionError, setTitleSuggestionError] = useState<string | null>(null);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [promptDraft, setPromptDraft] = useState(titleSuggestionPrompt);
   
   const toggleGroup = (id: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -235,6 +257,47 @@ export function LeftSidebar() {
     const duplicated = duplicateStory(storyId);
     if (duplicated) {
       setSelectedStory(duplicated.id);
+    }
+  };
+
+  const handleSuggestTitle = async () => {
+    if (!editingItem || editingItem.type !== 'story') return;
+    const utilityModel = completionModels.find((m) => m.isUtilityModel);
+    if (!utilityModel) {
+      setTitleSuggestionError('No utility model configured. Enable one in Completion Models settings.');
+      return;
+    }
+    const story = stories.find((s) => s.id === editingItem.id);
+    if (!story) return;
+
+    // Build story content (same as export: assistant sections joined)
+    const storyContent = (story.sections || [])
+      .filter((section) => section.type === 'assistant')
+      .map((section) => section.content || '')
+      .filter((content) => content.trim().length > 0)
+      .join('\n\n');
+
+    // Build adjacent titles (all stories in same collection except this one)
+    const adjacentTitles = stories
+      .filter((s) => s.collectionId === story.collectionId && s.id !== story.id)
+      .map((s) => s.name);
+
+    setIsSuggestingTitle(true);
+    setTitleSuggestionError(null);
+    try {
+      const suggested = await suggestTitle(
+        utilityModel,
+        titleSuggestionPrompt,
+        storyContent || '(no content yet)',
+        adjacentTitles,
+      );
+      if (suggested) {
+        setNewItemName(suggested);
+      }
+    } catch (err) {
+      setTitleSuggestionError(err instanceof Error ? err.message : 'Failed to suggest title');
+    } finally {
+      setIsSuggestingTitle(false);
     }
   };
 
@@ -563,21 +626,100 @@ export function LeftSidebar() {
         onClose={() => {
           setEditingItem(null);
           setNewItemName('');
+          setTitleSuggestionError(null);
+          setShowPromptEditor(false);
         }}
         title={`Edit ${editingItem?.type || ''}`}
         size="sm"
       >
-        <Input
-          label="Name"
-          value={newItemName}
-          onChange={(e) => setNewItemName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSaveEdit()}
-          autoFocus
-        />
+        <div className="relative">
+          <Input
+            label="Name"
+            value={newItemName}
+            onChange={(e) => setNewItemName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSaveEdit()}
+            autoFocus
+            className={editingItem?.type === 'story' ? 'pr-20' : ''}
+          />
+          {editingItem?.type === 'story' && (
+            <div className="absolute right-1 top-[30px] flex items-center">
+              <button
+                type="button"
+                onClick={handleSuggestTitle}
+                disabled={isSuggestingTitle}
+                className="p-1 rounded hover:bg-purple-100 transition-colors disabled:opacity-50"
+                title="Suggest title with AI"
+              >
+                <SparklesIcon spinning={isSuggestingTitle} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPromptDraft(titleSuggestionPrompt);
+                  setShowPromptEditor(!showPromptEditor);
+                }}
+                className="p-1 rounded hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-600"
+                title="Edit title suggestion prompt"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+        {titleSuggestionError && (
+          <p className="mt-1 text-xs text-amber-600">{titleSuggestionError}</p>
+        )}
+        
+        {/* Prompt Editor (expandable) */}
+        {showPromptEditor && editingItem?.type === 'story' && (
+          <div className="mt-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+            <h4 className="text-xs font-semibold text-gray-600 mb-2">Title Suggestion Prompt</h4>
+            <p className="text-[11px] text-gray-400 mb-2">
+              Placeholders: <code className="bg-gray-200 px-1 rounded">{'{story}'}</code> = story content, <code className="bg-gray-200 px-1 rounded">{'{adjacent_titles}'}</code> = other titles in collection
+            </p>
+            <textarea
+              value={promptDraft}
+              onChange={(e) => setPromptDraft(e.target.value)}
+              className="w-full h-28 px-2 py-1.5 text-xs font-mono border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none bg-white"
+              spellCheck={false}
+            />
+            <div className="flex justify-between items-center mt-2">
+              <button
+                onClick={() => setPromptDraft('Suggest a short, compelling title for this story. Reply with ONLY the title, no quotes, no extra text.\n\nStory content:\n{story}\n\nOther stories in this collection:\n{adjacent_titles}')}
+                className="text-[11px] text-gray-500 hover:text-gray-700 underline"
+              >
+                Reset to default
+              </button>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => setShowPromptEditor(false)}
+                  className="px-2 py-1 text-xs text-gray-600 hover:bg-gray-200 rounded-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setTitleSuggestionPrompt(promptDraft);
+                    setShowPromptEditor(false);
+                  }}
+                  className="px-2 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Save Prompt
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="secondary" onClick={() => {
             setEditingItem(null);
             setNewItemName('');
+            setTitleSuggestionError(null);
+            setShowPromptEditor(false);
           }}>
             Cancel
           </Button>

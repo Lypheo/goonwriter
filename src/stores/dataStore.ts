@@ -64,7 +64,7 @@ const debouncedSaveCollections = (collections: Collection[]) => {
   saveCollectionsTimeout = setTimeout(() => saveData('collections', collections), 500);
 };
 
-const debouncedSaveAppState = (appState: { selectedStoryId: string | null; userCommandTemplate?: string }) => {
+const debouncedSaveAppState = (appState: { selectedStoryId: string | null; userCommandTemplate?: string; titleSuggestionPrompt?: string }) => {
   if (saveAppStateTimeout) clearTimeout(saveAppStateTimeout);
   saveAppStateTimeout = setTimeout(() => saveData('appState', appState), 500);
 };
@@ -586,6 +586,7 @@ interface AppState {
   selectedCollectionId: string | null;
   selectedStoryId: string | null;
   userCommandTemplate: string;
+  titleSuggestionPrompt: string;
   isAppStateInitialized: boolean;
   
   initializeAppState: () => Promise<void>;
@@ -593,6 +594,7 @@ interface AppState {
   setSelectedCollection: (id: string | null) => void;
   setSelectedStory: (id: string | null) => void;
   setUserCommandTemplate: (template: string) => void;
+  setTitleSuggestionPrompt: (prompt: string) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => ({
@@ -600,13 +602,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
   selectedCollectionId: null,
   selectedStoryId: null,
   userCommandTemplate: '{cursor}',
+  titleSuggestionPrompt: 'Suggest a short, compelling title for this story. Reply with ONLY the title, no quotes, no extra text.\n\nStory content:\n{story}\n\nOther stories in this collection:\n{adjacent_titles}',
   isAppStateInitialized: false,
   
   initializeAppState: async () => {
     if (get().isAppStateInitialized) return;
     
     try {
-      const appState = await fetchData<{ selectedStoryId: string | null; userCommandTemplate?: string }>('appState');
+      const appState = await fetchData<{ selectedStoryId: string | null; userCommandTemplate?: string; titleSuggestionPrompt?: string }>('appState');
       if (appState?.selectedStoryId) {
         // Verify the story still exists
         const stories = useDataStore.getState().stories;
@@ -617,6 +620,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
       if (appState?.userCommandTemplate) {
         set({ userCommandTemplate: appState.userCommandTemplate });
+      }
+      if (appState?.titleSuggestionPrompt) {
+        set({ titleSuggestionPrompt: appState.titleSuggestionPrompt });
       }
     } catch (error) {
       console.error('Failed to load app state:', error);
@@ -633,5 +639,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setUserCommandTemplate: (template) => {
     set({ userCommandTemplate: template });
     debouncedSaveAppState({ selectedStoryId: get().selectedStoryId, userCommandTemplate: template });
+  },
+  setTitleSuggestionPrompt: (prompt) => {
+    set({ titleSuggestionPrompt: prompt });
+    debouncedSaveAppState({ selectedStoryId: get().selectedStoryId, userCommandTemplate: get().userCommandTemplate, titleSuggestionPrompt: prompt });
   },
 }));

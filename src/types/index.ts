@@ -272,6 +272,7 @@ export interface CompletionModelConfig {
   allowedQuantizations: string[];
   sortOrder: 'price' | 'throughput' | 'latency' | null;
   enabled: boolean; // Whether this model is active for sentence completion
+  isUtilityModel: boolean; // Whether this model is the designated utility model (only one at a time)
   mode: 'instruction' | 'raw'; // instruction = chat completion, raw = text completion
   systemMessage: string; // System message for instruction mode
   prompt: string; // User prompt template (prepended to context) for instruction mode

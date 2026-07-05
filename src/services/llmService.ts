@@ -522,6 +522,55 @@ export async function requestSentenceCompletion(
   };
 }
 
+// Suggest a title for a story using the utility model via chat completions
+export async function suggestTitle(
+  model: CompletionModelConfig,
+  promptTemplate: string,
+  storyContent: string,
+  adjacentTitles: string[],
+  abortSignal?: AbortSignal
+): Promise<string> {
+  if (!model.baseUrl.trim() || !model.modelId.trim()) {
+    return '';
+  }
+
+  const provider = buildCompletionModelProviderConfig(model);
+  const prompt = promptTemplate
+    .replace(/\{story\}/g, storyContent)
+    .replace(/\{adjacent_titles\}/g, adjacentTitles.join('\n'));
+
+  const url = `${model.baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const messages: ChatMessage[] = [
+    { role: 'user', content: prompt },
+  ];
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${model.token}`,
+    },
+    body: JSON.stringify({
+      model: model.modelId,
+      messages,
+      stream: false,
+      ...(provider ? { provider } : {}),
+    }),
+    signal: abortSignal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Title suggestion API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  return (data.choices?.[0]?.message?.content || '').trim();
+}
+
 // Stream completion from the API
 export async function streamCompletion(
   model: ModelConfig,
