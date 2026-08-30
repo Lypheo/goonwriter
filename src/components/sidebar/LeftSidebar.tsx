@@ -302,7 +302,7 @@ export function LeftSidebar() {
   };
 
   return (
-    <div className="w-full h-full bg-gray-50 border-r border-gray-200 flex flex-col">
+    <div className="w-full h-full bg-gray-50 flex flex-col min-w-0">
       {/* Header */}
       <div className="p-3 border-b border-gray-200 flex items-center justify-between">
         <h2 className="font-semibold text-gray-800">Library</h2>
@@ -345,7 +345,7 @@ export function LeftSidebar() {
                   <ChevronIcon isOpen={isGroupExpanded} />
                   <FolderIcon />
                   <span className="flex-1 text-sm truncate">{group.name}</span>
-                  <div className="hidden group-hover:flex items-center gap-0.5">
+                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                     <button
                       className="p-1 hover:bg-gray-300 rounded"
                       onClick={(e) => {
@@ -415,7 +415,7 @@ export function LeftSidebar() {
                             <CollectionIcon />
                             <span className="flex-1 text-sm truncate">{collection.name}</span>
                             <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{formatRelativeDate(collection.updatedAt)}</span>
-                            <div className="hidden group-hover:flex items-center gap-0.5">
+                            <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                               <button
                                 className="p-1 hover:bg-gray-300 rounded"
                                 onClick={(e) => {
@@ -480,7 +480,7 @@ export function LeftSidebar() {
                                           {childStories.length} ch
                                         </span>
                                       )}
-                                      <div className="hidden group-hover:flex items-center gap-0.5">
+                                      <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                                         <button
                                           className="p-1 hover:bg-blue-200 text-blue-600 rounded"
                                           onClick={(e) => {

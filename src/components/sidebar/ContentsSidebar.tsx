@@ -30,7 +30,7 @@ export function ContentsSidebar() {
   };
 
   return (
-    <div className="w-full h-full bg-gray-50 border-r border-gray-200 flex flex-col">
+    <div className="w-full h-full bg-gray-50 flex flex-col min-w-0">
       <div className="p-3 border-b border-gray-200">
         <h2 className="font-semibold text-gray-800">Contents</h2>
       </div>
@@ -46,11 +46,11 @@ export function ContentsSidebar() {
               <button
                 key={section.id}
                 onClick={() => jumpToAssistant(section.id)}
-                className="w-full text-left px-2 py-1.5 rounded text-sm text-gray-700 hover:bg-gray-200 transition-colors"
+                className="w-full text-left px-2 py-1.5 rounded text-sm text-gray-700 hover:bg-gray-200 transition-colors flex items-center min-w-0"
                 title={getAssistantTitle(section.content, index)}
               >
-                <span className="text-gray-400 mr-1">{index + 1}.</span>
-                <span className="truncate align-middle">{getAssistantTitle(section.content, index)}</span>
+                <span className="text-gray-400 mr-1 shrink-0">{index + 1}.</span>
+                <span className="truncate flex-1 min-w-0">{getAssistantTitle(section.content, index)}</span>
               </button>
             ))}
           </div>

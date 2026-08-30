@@ -7,6 +7,9 @@ import { StoryEditor } from './components/editor/StoryEditor';
 import { useDataStore, useModelStore, useAppStore, useCompletionModelStore } from './stores';
 
 const LEFT_PANEL_WIDTH_STORAGE_KEY = 'goonwriter:leftPanelWidth';
+const LEFT_PANEL_COLLAPSED_STORAGE_KEY = 'goonwriter:leftPanelCollapsed';
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'goonwriter:rightPanelWidth';
+const RIGHT_PANEL_COLLAPSED_STORAGE_KEY = 'goonwriter:rightPanelCollapsed';
 const LIBRARY_PANEL_HEIGHT_STORAGE_KEY = 'goonwriter:libraryPanelHeight';
 const LEFT_PANEL_MODE_STORAGE_KEY = 'goonwriter:leftPanelMode';
 
@@ -22,6 +25,14 @@ function readStoredNumber(key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') return fallback;
+
+  const raw = window.localStorage.getItem(key);
+  if (raw === null) return fallback;
+  return raw === 'true';
+}
+
 function readStoredMode(): LeftPanelMode {
   if (typeof window === 'undefined') return 'workspace';
 
@@ -33,10 +44,14 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isDataInitialized = useDataStore((state) => state.isInitialized);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(() => readStoredNumber(LEFT_PANEL_WIDTH_STORAGE_KEY, 540));
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => readStoredNumber(LEFT_PANEL_WIDTH_STORAGE_KEY, 360));
+  const [isLeftCollapsed, setIsLeftCollapsed] = useState(() => readStoredBoolean(LEFT_PANEL_COLLAPSED_STORAGE_KEY, false));
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => readStoredNumber(RIGHT_PANEL_WIDTH_STORAGE_KEY, 288));
+  const [isRightCollapsed, setIsRightCollapsed] = useState(() => readStoredBoolean(RIGHT_PANEL_COLLAPSED_STORAGE_KEY, false));
   const [libraryPanelHeight, setLibraryPanelHeight] = useState(() => readStoredNumber(LIBRARY_PANEL_HEIGHT_STORAGE_KEY, 420));
   const [leftPanelMode, setLeftPanelMode] = useState<LeftPanelMode>(() => readStoredMode());
   const isResizingOuterRef = useRef(false);
+  const isResizingRightRef = useRef(false);
   const isResizingInnerRef = useRef(false);
   
   // The initialized states are tracked internally by the stores
@@ -125,6 +140,21 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(isLeftCollapsed));
+  }, [isLeftCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(rightPanelWidth));
+  }, [rightPanelWidth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(RIGHT_PANEL_COLLAPSED_STORAGE_KEY, String(isRightCollapsed));
+  }, [isRightCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     window.localStorage.setItem(LIBRARY_PANEL_HEIGHT_STORAGE_KEY, String(libraryPanelHeight));
   }, [libraryPanelHeight]);
 
@@ -171,8 +201,8 @@ function App() {
     event.preventDefault();
     isResizingOuterRef.current = true;
 
-    const minPanelWidth = 360;
-    const maxPanelWidth = Math.max(minPanelWidth, window.innerWidth - 420);
+    const minPanelWidth = 180;
+    const maxPanelWidth = Math.max(minPanelWidth, window.innerWidth - (isRightCollapsed ? 0 : rightPanelWidth) - 200);
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isResizingOuterRef.current) return;
@@ -183,6 +213,34 @@ function App() {
 
     const handleMouseUp = () => {
       isResizingOuterRef.current = false;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const startRightPanelResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    isResizingRightRef.current = true;
+
+    const minPanelWidth = 180;
+    const maxPanelWidth = Math.max(minPanelWidth, window.innerWidth - (isLeftCollapsed ? 0 : leftPanelWidth) - 200);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRightRef.current) return;
+
+      const nextWidth = Math.max(minPanelWidth, Math.min(maxPanelWidth, window.innerWidth - moveEvent.clientX));
+      setRightPanelWidth(nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRightRef.current = false;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = '';
@@ -206,8 +264,9 @@ function App() {
       if (!isResizingInnerRef.current) return;
 
       const deltaY = moveEvent.clientY - dragStartY;
-      const maxLibraryHeight = Math.max(180, window.innerHeight - 240);
-      const nextHeight = Math.max(180, Math.min(maxLibraryHeight, initialLibraryHeight + deltaY));
+      const minLibraryHeight = 120;
+      const maxLibraryHeight = Math.max(minLibraryHeight, window.innerHeight - 160);
+      const nextHeight = Math.max(minLibraryHeight, Math.min(maxLibraryHeight, initialLibraryHeight + deltaY));
       setLibraryPanelHeight(nextHeight);
     };
 
@@ -228,66 +287,105 @@ function App() {
   return (
     <div className="h-screen flex overflow-hidden bg-white">
       {/* Left Sidebar Panel */}
-      <div style={{ width: `${leftPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0">
-        <div className="shrink-0 border-b border-gray-200 bg-gray-50 px-2 py-1.5">
-          <div className="inline-flex rounded-md border border-gray-300 bg-white overflow-hidden">
+      {!isLeftCollapsed && (
+        <div style={{ width: `${leftPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0 border-r border-gray-200">
+          <div className="shrink-0 border-b border-gray-200 bg-gray-50 px-2 py-1.5 flex items-center justify-between gap-1">
+            <div className="inline-flex rounded-md border border-gray-300 bg-white overflow-hidden text-xs min-w-0 flex-1">
+              <button
+                type="button"
+                className={`flex-1 min-w-0 px-2 py-1 text-xs truncate text-center transition-colors ${leftPanelMode === 'workspace' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+                onClick={() => setLeftPanelMode('workspace')}
+                title="Library + Contents"
+              >
+                Library
+              </button>
+              <button
+                type="button"
+                className={`flex-1 min-w-0 px-2 py-1 text-xs border-l border-gray-300 truncate text-center transition-colors ${leftPanelMode === 'prompt' ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+                onClick={() => setLeftPanelMode('prompt')}
+                title="Story Blueprint"
+              >
+                Blueprint
+              </button>
+            </div>
             <button
               type="button"
-              className={`px-3 py-1.5 text-xs ${leftPanelMode === 'workspace' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-              onClick={() => setLeftPanelMode('workspace')}
+              onClick={() => setIsLeftCollapsed(true)}
+              className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded shrink-0 transition-colors"
+              title="Collapse left sidebar"
+              aria-label="Collapse left sidebar"
             >
-              Library + Contents
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1.5 text-xs border-l border-gray-300 ${leftPanelMode === 'prompt' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-              onClick={() => setLeftPanelMode('prompt')}
-            >
-              Story Blueprint
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
             </button>
           </div>
-        </div>
 
-        {leftPanelMode === 'workspace' ? (
-          <>
-            <div style={{ height: `${libraryPanelHeight}px` }} className="shrink-0 min-h-0">
-              <LeftSidebar />
-            </div>
+          {leftPanelMode === 'workspace' ? (
+            <>
+              <div style={{ height: `${libraryPanelHeight}px` }} className="shrink-0 min-h-0">
+                <LeftSidebar />
+              </div>
 
-            <div
-              className="h-3 w-full cursor-row-resize relative group"
-              onMouseDown={startInnerPanelResize}
-              title="Resize library/contents split"
-            >
-              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1.5 w-10 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
-            </div>
+              <div
+                className="h-3 w-full cursor-row-resize relative group shrink-0"
+                onMouseDown={startInnerPanelResize}
+                title="Resize library/contents split"
+              >
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1.5 w-10 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
+              </div>
 
+              <div className="min-h-0 flex-1">
+                <ContentsSidebar />
+              </div>
+            </>
+          ) : (
             <div className="min-h-0 flex-1">
-              <ContentsSidebar />
+              <PromptEngineeringSidebar />
             </div>
-          </>
-        ) : (
-          <div className="min-h-0 flex-1">
-            <PromptEngineeringSidebar />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      <div
-        className="w-3 h-full cursor-col-resize relative group"
-        onMouseDown={startLeftPanelResize}
-        title="Resize sidebar"
-      >
-        <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1.5 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
-      </div>
+      {/* Left Resize Handle */}
+      {!isLeftCollapsed && (
+        <div
+          className="w-3 h-full cursor-col-resize relative group shrink-0"
+          onMouseDown={startLeftPanelResize}
+          title="Resize left sidebar"
+        >
+          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1.5 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
+        </div>
+      )}
       
       {/* Main Editor Area */}
-      <StoryEditor />
+      <StoryEditor
+        isLeftCollapsed={isLeftCollapsed}
+        onExpandLeft={() => setIsLeftCollapsed(false)}
+        isRightCollapsed={isRightCollapsed}
+        onExpandRight={() => setIsRightCollapsed(false)}
+      />
+
+      {/* Right Resize Handle */}
+      {!isRightCollapsed && (
+        <div
+          className="w-3 h-full cursor-col-resize relative group shrink-0"
+          onMouseDown={startRightPanelResize}
+          title="Resize right sidebar"
+        >
+          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-gray-200 group-hover:bg-gray-300 transition-colors" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-10 w-1.5 rounded-full bg-white border border-gray-300 shadow-sm group-hover:border-gray-400 group-hover:bg-gray-50 transition-colors pointer-events-none" />
+        </div>
+      )}
       
       {/* Right Sidebar - LLM Controls */}
-      <RightSidebar />
+      {!isRightCollapsed && (
+        <div style={{ width: `${rightPanelWidth}px` }} className="h-full shrink-0 flex flex-col min-w-0 border-l border-gray-200">
+          <RightSidebar onCollapse={() => setIsRightCollapsed(true)} />
+        </div>
+      )}
     </div>
   );
 }

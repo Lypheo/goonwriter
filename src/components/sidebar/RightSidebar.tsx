@@ -40,7 +40,7 @@ const HelpIcon = () => (
   </svg>
 );
 
-export function RightSidebar() {
+export function RightSidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   const {
     models,
     selectedModelId,
@@ -724,11 +724,28 @@ export function RightSidebar() {
   }, [availableProviders, hasLoadedProviderData, isOpenRouterModel, selectedModel, updateModel]);
   
   return (
-    <div className="w-72 h-full bg-gray-50 border-l border-gray-200 flex flex-col">
+    <div className="w-full h-full bg-gray-50 flex flex-col min-w-0">
       {/* Header */}
-      <div className="p-3 border-b border-gray-200 flex items-center justify-between">
-        <h2 className="font-semibold text-gray-800">LLM Controls</h2>
-        <HelpIcon />
+      <div className="p-3 border-b border-gray-200 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="font-semibold text-gray-800 truncate">LLM Controls</h2>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <HelpIcon />
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       
       {/* Model Selection */}
@@ -899,7 +916,7 @@ export function RightSidebar() {
                           )}
                         </div>
                         
-                        <div className="flex items-center justify-between w-full text-[11px] text-gray-500">
+                        <div className="flex flex-wrap items-center justify-between gap-1 w-full text-[11px] text-gray-500">
                           {/* Price */}
                           <div className="flex items-center gap-1 font-mono text-[11px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 shrink-0" title="Price (in/out) per 1M tokens">
                             <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -907,7 +924,7 @@ export function RightSidebar() {
                           </div>
 
                           {/* Speed stats wrapper */}
-                          <div className="flex items-center gap-3 shrink-0 ml-2">
+                          <div className="flex items-center gap-3 shrink-0">
                             {/* Throughput */}
                             <div className="flex items-center gap-1" title="Throughput (p50)">
                               <svg className="w-3 h-3 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
@@ -1025,26 +1042,24 @@ export function RightSidebar() {
           </Button>
         )}
 
-        <div className="flex justify-end mt-2">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleExportStory}
-              disabled={!selectedStory || !exportStoryText}
-              title="Copy all assistant responses concatenated"
-            >
-              Export Story
-            </Button>
-            <button
-              onClick={() => setShowRawPromptModal(true)}
-              disabled={!selectedStory || !selectedModel}
-              title="Preview the exact raw prompt sent to /completions"
-              className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:no-underline disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Preview raw prompt
-            </button>
-          </div>
+        <div className="flex flex-wrap justify-end items-center gap-2 mt-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleExportStory}
+            disabled={!selectedStory || !exportStoryText}
+            title="Copy all assistant responses concatenated"
+          >
+            Export Story
+          </Button>
+          <button
+            onClick={() => setShowRawPromptModal(true)}
+            disabled={!selectedStory || !selectedModel}
+            title="Preview the exact raw prompt sent to /completions"
+            className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:no-underline disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Preview raw prompt
+          </button>
         </div>
 
         {selectedStory && exportStatus !== 'idle' && (
